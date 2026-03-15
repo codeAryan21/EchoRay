@@ -1,0 +1,123 @@
+%% ============================================================
+\section{Discussion}
+\label{sec:discussion}
+%% ============================================================
+
+\subsection{Lessons Learned}
+
+The development of \echoray{} surfaced several engineering insights that have
+broader applicability to the design of collaborative web applications.
+
+\textbf{Simplicity scales surprisingly far.}
+The broadcast-relay synchronisation model—broadcasting the full serialised
+file tree on every save—was chosen for simplicity over correctness. In
+practice, project file trees in the target use case (small-to-medium
+prototypes) are rarely larger than a few hundred kilobytes, making full
+serialisation over WebSocket negligible in bandwidth terms. The lesson is that
+operational transformation or CRDTs are necessary only when \emph{concurrent}
+edits from multiple users must be merged without user intervention; for
+single-driver workflows (one developer editing while others observe), the
+simpler model suffices.
+
+\textbf{Type safety pays dividends at scale.}
+The uniform use of TypeScript across client and server, combined with Prisma's
+generated types and Zod's runtime validation, eliminated an entire category
+of integration bugs during development. Parameters that would have failed
+silently (incorrect types, missing required fields) were surfaced at compile
+time or at the API boundary, not in production logs.
+
+\textbf{Redis token blacklisting is both simple and effective.}
+The token blacklist pattern implemented in \echoray{} provides effective
+session revocation with minimal code complexity. The key insight is that
+Redis's \texttt{SETEX} command naturally aligns with JWT TTLs: setting the
+blacklist entry TTL to the token's remaining validity ensures the cache never
+accumulates stale entries.
+
+\textbf{JSON blob storage is a pragmatic trade-off.}
+Storing the file tree as a JSON blob in PostgreSQL significantly simplifies the
+schema and avoids complex file-entity normalisation. However, it prevents
+partial updates (every save overwrites the entire tree) and makes it impossible
+to query file contents via SQL. For larger projects, a normalised file model
+with content-addressable storage (similar to Git's object model) would be more
+appropriate.
+
+\subsection{Comparison with Related Systems}
+
+\textbf{vs GitHub Codespaces/VS Live Share.}
+These tools provide superior editor fidelity (true LSP integration, full
+extension ecosystem) but require either a local IDE installation (Live Share)
+or a paid cloud subscription (Codespaces). \echoray{} provides a fully
+browser-native experience with no installation requirement and no per-seat
+cost, at the expense of editor feature completeness.
+
+\textbf{vs Replit.}
+Replit offers AI assistance and real-time collaboration but uses a proprietary
+multiplayer engine whose implementation is not publicly disclosed. \echoray{}
+provides full source visibility, enabling researchers and practitioners to
+study, extend, and adapt the synchronisation and AI-integration mechanisms.
+
+\textbf{vs CRDT-based editors (Yjs/Automerge).}
+Systems built on Yjs or Automerge provide mathematically guaranteed
+conflict-free merges, enabling truly offline-first collaboration. \echoray{}
+does not currently support offline editing; this is an acknowledged
+architectural limitation rather than a deliberate design choice, and
+integration of a Yjs provider is a natural extension path.
+
+\subsection{Implications for Practice}
+
+\textbf{AI broadcast as a team synchronisation mechanism.}
+The \texttt{@ai} broadcast pattern has implications beyond code generation.
+When a team member invokes an AI assistant in \echoray{}, all collaborators
+simultaneously see (a) the user's natural-language intent and (b) the AI's
+structured response. This shared visibility may reduce the \emph{context
+asymmetry} identified by Vaithilingam \etal~\cite{vaithilingam2022expectation}
+as a barrier to effective AI-assisted team programming.
+
+\textbf{Structured AI output reduces integration friction.}
+By constraining Gemini to output a \texttt{fileTree} object compatible with
+the WebContainer API, \echoray{} enables one-click execution of AI-generated
+code without any manual copy-paste. This tight integration between AI output
+schema and execution substrate is a design pattern worth wider adoption.
+
+\textbf{Redis for token blacklisting should be the default, not the exception.}
+Many production systems still rely on short-lived JWTs as the sole revocation
+mechanism, accepting a window of up to 15--60 minutes during which a
+compromised token remains valid. \echoray{}'s Redis blacklist demonstrates
+that immediate revocation is straightforward to implement; the marginal
+operational cost (one Redis instance) is justified for any application handling
+personal data.
+
+\subsection{Limitations and Open Problems}
+
+\begin{enumerate}[leftmargin=*, label=\textbf{L\arabic*.}]
+  \item \textbf{No conflict resolution for concurrent edits.}
+    Two users editing the same file simultaneously will experience
+    last-writer-wins overwrite behaviour. Integrating a CRDT library (Yjs or
+    Automerge) would resolve this.
+
+  \item \textbf{No automated tests.}
+    The codebase currently lacks unit tests, integration tests, or end-to-end
+    tests. This increases the risk of regression when extending the platform
+    and limits confidence in the correctness of the security mechanisms.
+
+  \item \textbf{No rate limiting on the AI endpoint.}
+    Unlimited AI queries could exhaust the Gemini API quota and incur
+    significant cost. Per-user, per-project, and global rate limits should
+    be implemented before public deployment.
+
+  \item \textbf{No streaming AI responses.}
+    The current implementation waits for the full Gemini response before
+    broadcasting. Streaming (Server-Sent Events or WebSocket streaming) would
+    reduce perceived latency for long-form code generation.
+
+  \item \textbf{Single-server Socket.io limitation.}
+    As discussed in \cref{sec:evaluation}, scaling beyond one server instance
+    requires the Redis adapter. This dependency should be documented and
+    included in the default deployment configuration.
+
+  \item \textbf{File-tree size unbounded.}
+    There is no server-side limit on the size of the \texttt{fileTree} JSON
+    blob. A malicious or careless user could store an arbitrarily large payload,
+    degrading database performance. A size cap (e.g., 10\,MB) should be
+    enforced at the Zod validation layer.
+\end{enumerate}

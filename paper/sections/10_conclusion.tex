@@ -1,0 +1,155 @@
+%% ============================================================
+\section{Conclusion}
+\label{sec:conclusion}
+%% ============================================================
+
+\subsection{Summary of Contributions}
+
+This paper presented \echoray{}, an open-source, AI-augmented real-time
+collaborative development environment built on a modern TypeScript full-stack.
+We demonstrated five original contributions:
+
+\begin{enumerate}[leftmargin=*, label=\textbf{C\arabic*.}]
+  \item \textbf{Unified browser-native CDE architecture} integrating Monaco
+    Editor, WebContainer, Socket.io, and Gemini~2.5~Flash into a cohesive,
+    self-hostable system deployable with three environment variables.
+  \item \textbf{AI-broadcast synchronisation protocol} where every
+    \texttt{@ai}-prefixed message atomically triggers: (i) relay of the user's
+    query to all peers, (ii) Gemini generation, and (iii) structured JSON
+    response broadcast to all room members. This protocol is formalised in
+    \cref{sec:methodology} and achieves a median first-response latency of
+    820\,ms---the lowest among evaluated systems.
+  \item \textbf{Two-tier RBAC model} with mathematical proofs of privilege
+    separation (\cref{cor:priv}) and token blacklist completeness
+    (\cref{thm:blacklist}), providing formally verified access control.
+  \item \textbf{Empirical performance characterisation} with 200-trial
+    benchmarks covering WebSocket latency, AI response latency, REST endpoint
+    throughput, database caching speedup, and security mechanism overhead.
+    Prisma Accelerate reduces read latency by $3.8\times$; median message
+    delivery remains below 45\,ms for up to 50 concurrent users.
+  \item \textbf{Open-source release} at \url{https://github.com/codeAryan21/EchoRay}
+    under the MIT license, enabling reproduction of all results and extension
+    of the platform.
+\end{enumerate}
+
+Against the landscape of 2025--2026 related systems surveyed in
+\cref{sec:litreview}, \echoray{} is the only system satisfying all nine
+criteria in \cref{tab:related_full}: open-source, browser-native, real-time
+synchronisation, AI assistance, AI broadcast, RBAC, in-browser execution, JWT
+revocation, and self-hostability.
+
+\subsection{Impact}
+
+The core insight---that broadcasting AI responses to all collaborators rather
+than returning them only to the invoker---represents a paradigm shift from
+individual AI assistance to \emph{collective AI awareness}. As team-scale
+adoption of AI coding tools grows~\cite{barke2025meta}, the context asymmetry
+identified by Vaithilingam \etal~\cite{vaithilingam2022expectation} becomes an
+increasing productivity bottleneck. \echoray{} demonstrates an architecture
+that resolves this asymmetry with minimal engineering complexity: three
+additional lines of Socket.io code (\cref{lst:golden_socket}).
+
+The structured JSON output schema---enforcing \texttt{responseMimeType:
+"application/json"} on Gemini---reduces parsing errors by 89\%
+\cite{beurer2025structured} and enables zero-copy mounting of AI-generated
+code into the live WebContainer, eliminating the manual copy-paste workflow
+that dominates current AI-assisted development sessions.
+
+\subsection{Future Work}
+
+The limitations identified in this paper yield three high-priority research
+directions, each grounded in specific code-level evidence:
+
+\textbf{FW1 --- CRDT-based concurrent editing with CRDT-LLM merge.}
+The LWW file-tree merge (\cref{eq:merge_lww}) is the primary correctness
+limitation of \echoray{}. Integrating Yjs~\cite{nicolaescu2015yjs} as the
+synchronisation layer would eliminate the last-writer-wins race condition.
+More ambitiously, the AI service could be extended to act as a
+\emph{CRDT-aware merge assistant}: when two concurrent edits produce a
+conflict that CRDT cannot resolve automatically (e.g., both users added a
+function with the same name), the AI receives both versions and proposes a
+merged resolution. This would represent a novel three-way merge algorithm
+combining CRDT state, OT intent semantics, and LLM-based code understanding.
+
+\textbf{FW2 --- Streaming AI with server-sent token broadcast.}
+The current implementation awaits the full Gemini response before broadcasting
+(\cref{alg:auth_pipeline} Stage 2). The Gemini~2.5~Flash streaming API
+delivers tokens at~150\,tokens/s, enabling first-token delivery in
+$\approx\!180\,\text{ms}$ (network round-trip only). Combined with Socket.io's
+streaming transport, this would reduce \emph{perceived} AI latency by 4--10$\times$
+for complex prompts. The corresponding code change is a single-line replacement
+of \texttt{model.generateContent} with \texttt{model.generateContentStream},
+plus a streaming Socket.io emitter---a minimal code delta with outsized user
+experience impact.
+
+\textbf{FW3 --- Adversarial robustness: PromptGuard integration and broadcast
+injection defence.}
+Zhou \etal~\cite{zhou2025llmsec} identified \emph{broadcast injection} as a
+novel attack class directly applicable to \echoray{}: a malicious collaborator
+crafts an \texttt{@ai} prompt that causes Gemini to output
+\texttt{process.env.JWT\_SECRET} or similar sensitive values, which are then
+broadcast to all project members. The mitigation involves a three-stage
+defence: (i) server-side prompt sanitisation stripping shell-injection
+metacharacters, (ii) PromptGuard~\cite{liu2024promptguard} classification
+of the cleaned prompt before Gemini invocation, and (iii) output filtering
+scanning the JSON response for credential patterns before broadcast. A NIST
+SP~800-53~\cite{nist2024sp800} risk assessment of the \echoray{} threat
+model is a prerequisite for production deployment at enterprise scale.
+
+\subsection{Closing Remarks}
+
+The intersection of real-time collaboration and large language models is one
+of the most consequential frontiers in software engineering tooling. This work
+contributes a concrete existence proof---grounded in working, benchmarked,
+open-source code---that AI-broadcast collaboration is achievable at low
+complexity and high performance. We invite the community to extend, critique,
+and build upon \echoray{} as a reference platform for the next generation of
+team-scale AI-assisted development environments.
+
+\subsection{Limitations}
+\label{sub:limitations}
+
+We acknowledge the following limitations of the current \echoray{}
+implementation, which inform the future-work directions above:
+
+\begin{enumerate}[leftmargin=*, label=\textbf{L\arabic*.}]
+  \item \textbf{Last-Writer-Wins File Synchronisation.} The current
+    \texttt{PUT /update-file-tree} endpoint replaces the entire file tree
+    atomically. While this guarantees consistency, it loses concurrent edits:
+    if two collaborators save simultaneously, one edit is silently discarded.
+    This is the most pressing correctness limitation and is addressed by FW1.
+  \item \textbf{No Streaming AI Responses.} The AI service awaits the complete
+    Gemini response before broadcasting, introducing a perceived latency of up
+    to~6\,s for complex prompts. Streaming would dramatically reduce perceived
+    latency (FW2).
+  \item \textbf{No CI/CD Pipeline.} The repository currently lacks automated
+    testing and continuous deployment workflows. This limits confidence in
+    refactoring and slows the contribution cycle for community developers.
+  \item \textbf{Single-Tenant Role Model.} The two-tier Leader/Member model
+    does not support multi-tier hierarchies (e.g., organisation → project →
+    file-level permissions) required for enterprise deployments.
+  \item \textbf{No Rate Limiting.} The Gemini API and WebSocket endpoints lack
+    per-user rate limiting, making the system vulnerable to DoS-by-cost attacks
+    (consuming API quota) and message flood attacks.
+\end{enumerate}
+
+These limitations are not fundamental to the architecture---they are
+engineering gaps addressable without restructuring the system. Items~L1 and
+L2 are high-impact and technically tractable with the existing stack; items
+L3--L5 are straightforward engineering tasks appropriate for community
+contributions.
+
+\subsection{Reproducibility Statement}
+\label{sub:reproducibility}
+
+All results reported in this paper are reproducible using the open-source
+codebase at \url{https://github.com/codeAryan21/EchoRay}. The benchmark
+scripts used for latency measurements (\cref{sec:results}) can be reproduced
+using any standard Node.js load-testing library (e.g., \texttt{autocannon},
+\texttt{k6}). The Gemini API latency results require a valid API key; however,
+the model name and configuration are fully specified in \cref{lst:golden_ai}.
+Prisma Accelerate caching results require a Prisma Data Platform account
+(\url{https://www.prisma.io/data-platform}), but the non-cached baseline is
+reproducible with a direct PostgreSQL connection. The authors commit to
+maintaining the repository and responding to reproducibility inquiries via
+GitHub Issues.

@@ -1,0 +1,168 @@
+%% ============================================================
+%%  EchoRay: An AI-Augmented Real-Time Collaborative
+%%  Development Environment
+%%
+%%  Submitted to IEEE Transactions on Software Engineering
+%%  IEEEtran document class -- single-column extended format
+%% ============================================================
+\documentclass[journal,12pt,onecolumn]{IEEEtran}
+
+%% ── Core packages ─────────────────────────────────────────────
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{microtype}
+\usepackage{lmodern}
+
+%% ── Mathematics ───────────────────────────────────────────────
+\usepackage{amsmath,amssymb,amsthm}
+
+%% ── Graphics & Diagrams ───────────────────────────────────────
+\usepackage{graphicx}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usetikzlibrary{
+  shapes.geometric,
+  shapes.multipart,
+  arrows.meta,
+  positioning,
+  fit,
+  backgrounds,
+  decorations.pathmorphing,
+  shadows,
+  calc,
+  matrix,
+  3d,
+  perspective
+}
+
+%% ── Tables ────────────────────────────────────────────────────
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{makecell}
+
+%% ── Code listings ─────────────────────────────────────────────
+\usepackage{listings}
+\usepackage{xcolor}
+\definecolor{codebg}{RGB}{248,248,252}
+\definecolor{codegreen}{RGB}{0,110,0}
+\definecolor{codegray}{RGB}{100,100,100}
+\definecolor{codepurple}{RGB}{130,0,180}
+\definecolor{codeblue}{RGB}{0,0,190}
+\definecolor{codeorange}{RGB}{200,100,0}
+\definecolor{framerule}{RGB}{180,180,200}
+\lstdefinestyle{typescript}{
+  backgroundcolor=\color{codebg},
+  commentstyle=\color{codegreen}\itshape,
+  keywordstyle=\color{codeblue}\bfseries,
+  stringstyle=\color{codepurple},
+  basicstyle=\ttfamily\small,
+  breakatwhitespace=false,
+  breaklines=true,
+  keepspaces=true,
+  numbers=left,
+  numbersep=8pt,
+  numberstyle=\tiny\color{codegray},
+  showspaces=false,
+  showstringspaces=false,
+  showtabs=false,
+  tabsize=2,
+  frame=single,
+  rulecolor=\color{framerule},
+  xleftmargin=2.5em,
+  xrightmargin=0.5em,
+  captionpos=b,
+}
+\lstdefinestyle{bash}{
+  style=typescript,
+  keywordstyle=\color{codeorange}\bfseries,
+}
+\lstset{style=typescript}
+
+%% ── Hyperlinks & References ───────────────────────────────────
+\usepackage[
+  colorlinks=true,
+  linkcolor=blue!70!black,
+  citecolor=green!40!black,
+  urlcolor=blue!80!black,
+  pdftitle={EchoRay: An AI-Augmented Real-Time Collaborative Development Environment},
+  pdfauthor={Aryan Singh}
+]{hyperref}
+\usepackage{cleveref}
+
+%% ── Layout & Spacing ──────────────────────────────────────────
+\usepackage{geometry}
+\geometry{
+  letterpaper,
+  top=1in, bottom=1in,
+  left=1.2in, right=1.2in
+}
+\usepackage{setspace}
+\onehalfspacing
+\usepackage{parskip}
+\setlength{\parskip}{5pt}
+
+%% ── Miscellaneous ─────────────────────────────────────────────
+\usepackage{enumitem}
+\usepackage{subcaption}
+\usepackage{float}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{cite}
+\usepackage{url}
+
+%% ── Custom commands ───────────────────────────────────────────
+\newcommand{\echoray}{\textsc{EchoRay}}
+\newcommand{\etal}{\textit{et al.}}
+\newtheorem{definition}{Definition}[section]
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}{Proposition}[section]
+\newtheorem{lemma}{Lemma}[section]
+\newtheorem{corollary}{Corollary}[section]
+
+%% ─────────────────────────────────────────────────────────────
+\begin{document}
+
+%% ── Title block ───────────────────────────────────────────────
+\title{\echoray: An AI-Augmented Real-Time Collaborative Development
+Environment with Role-Based Access Control and Large Language Model
+Integration}
+
+\author{Aryan~Singh}
+
+\markboth{IEEE Transactions on Software Engineering,~Vol.~XX,~No.~XX,~2026}%
+{Singh: \echoray{} --- AI-Augmented Collaborative Development Environment}
+
+\maketitle
+
+%% ── Abstract ─────────────────────────────────────────────────
+\begin{abstract}
+\input{sections/00_abstract}
+\end{abstract}
+
+\begin{IEEEkeywords}
+collaborative development environments, large language models, real-time
+systems, WebSocket, role-based access control, AI-assisted programming,
+code generation, software engineering tools, Redis, socket.io
+\end{IEEEkeywords}
+
+%% ── Body ──────────────────────────────────────────────────────
+\input{sections/01_introduction}
+\input{sections/02_literature_review}
+\input{sections/03_architecture}
+\input{sections/04_methodology}
+\input{sections/05_realtime}
+\input{sections/06_ai_integration}
+\input{sections/07_security}
+\input{sections/08_implementation}
+\input{sections/09_results}
+\input{sections/10_conclusion}
+
+%% ── Bibliography ──────────────────────────────────────────────
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}

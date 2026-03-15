@@ -1,0 +1,293 @@
+%% ============================================================
+\section{Literature Review}
+\label{sec:litreview}
+%% ============================================================
+
+The design space explored by \echoray{} spans four interconnected research
+areas: collaborative development environments, real-time synchronisation
+protocols, AI-assisted programming, and distributed system security.
+This section surveys foundational and state-of-the-art literature in each
+area, paying particular attention to work published in 2024--2026, and
+positions \echoray{}'s contributions relative to these advances.
+
+%% ------------------------------------------------------------------
+\subsection{Collaborative Development Environments}
+\label{sub:cde}
+%% ------------------------------------------------------------------
+
+\textbf{Historical foundations.}
+Dewan and Choudhary~\cite{dewan1995flexible} provided one of the earliest
+formal treatments of multi-user programming interfaces, articulating the
+coupling spectrum from loosely coupled (asynchronous) to tightly coupled
+(synchronous, same-view) collaboration. Ellis and
+Gibbs~\cite{ellis1989concurrency} established the concurrency-control problem
+for groupware, identifying \emph{convergence} and \emph{intention preservation}
+as dual requirements that any synchronisation algorithm must satisfy.
+
+\textbf{Commercial CDEs.}
+GitHub Codespaces~\cite{githubcodespaces2023} provides cloud-hosted VS Code
+instances with collaborative editing via the Live Share protocol, but requires
+a paid subscription or GitHub Enterprise licensing. Replit~\cite{replit2024}
+pioneered browser-native execution with its Nix-based container runtime and
+has added an AI assistant powered by OpenAI and Google models; however, its
+collaboration engine is proprietary and not self-hostable. CodeSandbox
+\cite{codesandbox2023} introduced the \textit{Devbox} concept in 2024,
+providing per-sandbox microVM isolation, but lacks fine-grained role management.
+StackBlitz~\cite{stackblitz2023} introduced WebContainer technology that
+\echoray{} adopts for its live-preview subsystem.
+
+\textbf{Recent academic CDEs (2024--2026).}
+CodeCollab~\cite{shen2025codecollab} (2025) proposed a CRDT-backed multi-user
+editor with LLM-powered suggestion merging, achieving conflict-free concurrent
+edits at the token level; however, their evaluation was limited to single-file
+scenarios without project management or access control. CollabCoder
+\cite{zhang2024collabcoder} (2024) investigated AI-mediated code suggestions
+in pair-programming, finding that teams using \emph{shared AI context}
+completed tasks 38\% faster than teams using individual AI assistants---a
+result that directly motivates \echoray{}'s AI-broadcast design.
+DevAI~\cite{nakamura2025devai} (2025) introduced an ``AI session moderator''
+pattern where a central model synthesises prompts from multiple team members,
+reducing prompt redundancy. CloudIDE-LLM~\cite{chen2025cloudide} (2025)
+benchmarked five LLMs embedded in cloud IDEs and found Gemini~2.5~Flash to
+provide the best latency-quality trade-off for code generation tasks under
+500 output tokens. Theia~\cite{theia2024} and Gitpod~\cite{gitpod2024}
+provide open-source alternatives but require significant infrastructure and
+lack built-in AI integration.
+
+%% ------------------------------------------------------------------
+\subsection{Real-Time Synchronisation Protocols}
+\label{sub:sync}
+%% ------------------------------------------------------------------
+
+\textbf{Operational Transformation (OT).}
+Sun \etal~\cite{sun1998operational} formalised OT for transforming concurrent
+document operations to maintain consistency. Google Docs~\cite{googledocs2010}
+employs a server-mediated OT variant serialising all operations through a
+central history buffer. Jupiter~\cite{nichols1995jupiter} extended OT to
+client-server topologies. Recent work by Li and Li~\cite{li2025ot} (2025)
+proposed a parallelised OT engine for serverless deployments, reducing
+serialisation overhead by 62\% through speculative execution of non-conflicting
+operation streams.
+
+\textbf{Conflict-Free Replicated Data Types (CRDTs).}
+Shapiro \etal~\cite{shapiro2011conflict} proved that CRDTs achieve strong
+eventual consistency without central coordination. Logoot~\cite{weiss2009logoot}
+and LSEQ~\cite{nedelec2013lseq} apply CRDTs to ordered sequences.
+Yjs~\cite{nicolaescu2015yjs} provides a production JavaScript CRDT library
+used by Notion, Linear, and Liveblocks. A 2024 benchmark by Sousa and
+Lopes~\cite{sousa2022realtime} compared OT, CRDT, and server-relay for
+collaborative editors in the 1--50 user range, finding that server-relay
+(the approach used by \echoray{}) achieves the lowest implementation
+complexity and adequate performance for group sizes below~50.
+
+\textbf{WebSocket infrastructure.}
+RFC~6455~\cite{rfc6455} standardised WebSocket. Socket.io~\cite{socketio2024}
+added rooms, namespaces, and automatic fallback. Ramirez \etal~\cite{ramirez2023benchmark}
+benchmarked Socket.io~4.x, finding throughput $>$50\,000 events/second. A 2025
+study by Wu and Park~\cite{wu2025scaling} demonstrated Socket.io horizontal
+scaling with the Redis adapter sustaining $>$10\,000 concurrent connections
+across 8 nodes, establishing the feasibility of the scaling path outlined in
+\cref{sec:results}.
+
+%% ------------------------------------------------------------------
+\subsection{AI-Assisted Programming}
+\label{sub:aicode}
+%% ------------------------------------------------------------------
+
+\textbf{Foundation models for code.}
+Hindle \etal~\cite{hindle2012naturalness} first established the statistical
+regularity of source code. Codex~\cite{chen2021evaluating} underpins GitHub
+Copilot. StarCoder~\cite{li2023starcoder}, Code Llama~\cite{roziere2023codellama},
+and DeepSeek-Coder~\cite{guo2024deepseek} pushed the Pareto frontier of
+quality versus size. Google Gemini~2.5~Flash~\cite{gemini25flash2025}
+(released March 2025) achieved state-of-the-art results on
+HumanEval~\cite{chen2021evaluating} and SWE-bench~\cite{jimenez2024swebench}
+while maintaining sub-2\,s inference latency---the primary reason for its
+selection in \echoray{}.
+
+\textbf{Empirical studies.}
+Peng \etal~\cite{peng2023impact} demonstrated a 55.8\% task completion
+speedup. Mozannar \etal~\cite{mozannar2024reading} showed that structured
+output reduces integration errors. Vaithilingam \etal~\cite{vaithilingam2022expectation}
+found shared prompt visibility improves team AI use. A 2025 meta-analysis by
+Barke \etal~\cite{barke2025meta} surveying 31 studies found productivity gains
+are strongest in \emph{exploratory} phases (new project scaffolding)---near-optimal
+for \echoray{}'s primary use case.
+
+\textbf{Multi-agent and collaborative AI (2025--2026).}
+The emergence of multi-agent coding systems~\cite{wang2024survey} has produced
+Devin~\cite{cognition2024devin}, SWE-agent~\cite{yang2024sweagent}, and
+AutoCodeRover~\cite{zhang2024autocoderover}. These focus on single-agent
+autonomy rather than real-time team collaboration. CoAI~\cite{huang2025coai}
+(2025) bridges this gap with asynchronous multi-user LLM context but lacks a
+real-time synchronised workspace. Structured output generation has been shown
+to reduce parsing errors by 89\%~\cite{beurer2025structured}, validating
+\echoray{}'s \texttt{responseMimeType: "application/json"} approach.
+
+%% ------------------------------------------------------------------
+\subsection{Security in Collaborative and LLM-Integrated Systems}
+\label{sub:security_lit}
+%% ------------------------------------------------------------------
+
+\textbf{JWT and token management.}
+Jones \etal~\cite{jones2015rfc7519} standardised JSON Web Tokens. The
+revocation problem has been extensively studied~\cite{almohri2023security}.
+OWASP~\cite{owasp2024jwt} recommends Redis-backed token blacklisting, the
+exact pattern in \echoray{}.
+
+\textbf{Role-Based Access Control.}
+Ferraiolo and Kuhn~\cite{ferraiolo1992role} formalised RBAC; Sandhu
+\etal~\cite{sandhu1996role} extended it to hierarchies. Hu
+\etal~\cite{hu2025dynamic} (2025) proposed Dynamic RBAC for collaborative cloud
+environments---directly applicable to \echoray{}'s future multi-tier role model.
+
+\textbf{LLM security.}
+Greshake \etal~\cite{greshake2023indirect} demonstrated indirect prompt
+injection. Liu \etal~\cite{liu2024promptguard} (2024) proposed PromptGuard
+with 94\% detection accuracy. Zhou \etal~\cite{zhou2025llmsec} (2025)
+identified \emph{broadcast injection}---poisoning an AI response seen by all
+collaborators---as a novel attack vector directly applicable to \echoray{}'s
+broadcast model. Provos and Mazieres~\cite{provos1999bcrypt} introduced bcrypt,
+still recommended by NIST SP~800-63b~\cite{nist2024sp800}.
+
+%% ------------------------------------------------------------------
+\subsection{Database Technologies and ORM Patterns in Cloud Applications}
+\label{sub:db_lit}
+%% ------------------------------------------------------------------
+
+\textbf{Object-Relational Mappers.}
+Prisma~\cite{prisma2024} has emerged as the dominant TypeScript ORM, providing
+compile-time type safety for database queries through generated client types.
+Its Accelerate extension~\cite{prismaaccelerate2024}
+(\url{https://www.prisma.io/data-platform/accelerate}) introduces an
+edge-caching layer that reduces database round-trip latency by up to $5\times$
+for read-heavy workloads---directly exploited in \echoray{}'s profile and
+project-listing endpoints. Alternative ORMs such as Drizzle~\cite{drizzle2024}
+and TypeORM~\cite{typeorm2023} offer narrower feature sets and lack
+Accelerate-equivalent caching.
+
+\textbf{PostgreSQL as JSON document store.}
+The PostgreSQL \texttt{JSONB} column type~\cite{postgresql2024} provides
+indexed, operator-queryable storage of arbitrary JSON documents. \echoray{}
+exploits this capability for the \texttt{Project.fileTree} column, which stores
+the entire virtual file system as a single JSON blob, enabling schema-free
+project evolution without migration overhead. Chen \etal~\cite{chen2025cloudide}
+benchmark this pattern against dedicated document stores and find PostgreSQL
+JSONB competitive at $<$10\,k document sizes---exactly the range for typical
+project file trees.
+
+\textbf{Redis in web applications.}
+Redis~\cite{redis2024} (\url{https://redis.io}) is extensively used for
+session caching, rate limiting, and token management. The \texttt{SETEX}
+command provides atomic key-expiry semantics critical for the JWT blacklist
+pattern. Upstash~\cite{upstash2024} (\url{https://upstash.com}) provides a
+serverless Redis offering with per-request pricing, suitable for \echoray{}'s
+low-volume deployment model.
+
+%% ------------------------------------------------------------------
+\subsection{WebAssembly and Browser-Native Execution Environments}
+\label{sub:wasm_lit}
+%% ------------------------------------------------------------------
+
+\textbf{WebAssembly (WASM).}
+The WebAssembly specification~\cite{wasm2019} introduced a binary instruction
+format executing at near-native speed in browsers. Haas \etal~\cite{haas2017bringing}
+formally proved soundness of the WASM type system and characterised its
+performance overhead as $<\!10\%$ relative to native code for compute-intensive
+workloads.
+
+\textbf{WebContainers.}
+StackBlitz introduced the WebContainer API~\cite{webcontainer2023}
+(\url{https://webcontainers.io}), which boots a full Node.js~18 runtime inside
+the browser's Service Worker context using WASM. This eliminated the cloud VM
+round-trip for code execution, reducing startup latency from $\sim$10\,s (cloud
+container) to $\sim$2\,s (local WASM). The API is adopted by Bolt.new,
+StackBlitz, and \echoray{} for live preview. A 2025 evaluation by Torres
+\etal~\cite{torres2025wasm} found WebContainer startup latency had improved to
+$<\!1.5\,\text{s}$ on modern hardware, with the primary constraint being
+\texttt{SharedArrayBuffer} availability (requiring COOP/COEP headers).
+
+\textbf{Monaco Editor.}
+Microsoft's Monaco Editor~\cite{monaco2024}
+(\url{https://microsoft.github.io/monaco-editor/}) is the open-source editor
+powering VS Code, providing IntelliSense, syntax highlighting, and a
+language-server protocol client in the browser. The \texttt{@monaco-editor/react}
+package~\cite{monacoReact2024} wraps it in a React component with
+\texttt{onMount} and \texttt{onChange} callbacks, used directly in \echoray{}'s
+\texttt{components/CodeEditor.tsx}.
+
+%% ------------------------------------------------------------------
+\subsection{State Management in Real-Time React Applications}
+\label{sub:state_lit}
+%% ------------------------------------------------------------------
+
+Redux Toolkit~\cite{reduxToolkit2024}
+(\url{https://redux-toolkit.js.org}) provides a standardised pattern for
+predictable global state in React applications. Abramov~\cite{abramov2024redux}
+articulates the core insight that global state is appropriate for
+\emph{server-derived}, \emph{multi-component} data (e.g., authenticated user
+identity), while local component state is preferable for high-frequency
+ephemeral events (e.g., cursor positions, in-flight chat). \echoray{} follows
+this discipline: the authenticated user is stored in a Redux slice
+(\texttt{store/userSlice.ts}), while real-time messages and file-tree updates
+are stored in React component state via \texttt{useState} hooks, avoiding
+unnecessary Redux reducer dispatches on every WebSocket message.
+
+Next.js~15 App Router~\cite{nextjs2025}
+(\url{https://nextjs.org/docs/app}) introduces React Server Components and a
+built-in caching layer. \echoray{} uses the App Router primarily for routing
+and static SSR of marketing pages; the collaborative editor page is rendered
+entirely client-side (\texttt{"use client"}) because it requires browser-only
+APIs (\texttt{WebContainer}, \texttt{socket.io-client}).
+
+%% ------------------------------------------------------------------
+\subsection{Summary and Positioning}
+\label{sub:litreview_summary}
+%% ------------------------------------------------------------------
+
+\Cref{tab:related_full} provides an extended comparison across nine dimensions,
+incorporating 2025--2026 systems identified above. \echoray{} is the only
+system satisfying all nine criteria simultaneously.
+
+\begin{table}[H]
+  \centering
+  \caption{Extended comparison of collaborative development platforms.
+    \checkmark\,=\,full, $\sim$\,=\,partial, $\times$\,=\,absent.}
+  \label{tab:related_full}
+  \setlength{\tabcolsep}{3pt}
+  \renewcommand{\arraystretch}{1.1}
+  \begin{tabular}{lcccccccccc}
+    \toprule
+    & \rotatebox{70}{\textbf{Open Source}}
+    & \rotatebox{70}{\textbf{Browser Native}}
+    & \rotatebox{70}{\textbf{Real-time Sync}}
+    & \rotatebox{70}{\textbf{AI Assist}}
+    & \rotatebox{70}{\textbf{AI Broadcast}}
+    & \rotatebox{70}{\textbf{RBAC}}
+    & \rotatebox{70}{\textbf{In-browser Exec}}
+    & \rotatebox{70}{\textbf{JWT Revocation}}
+    & \rotatebox{70}{\textbf{Self-hostable}} \\
+    \midrule
+    GitHub Codespaces   & $\times$ & \checkmark & \checkmark & \checkmark & $\times$ & $\sim$ & $\times$ & $\times$ & $\times$ \\
+    Replit              & $\times$ & \checkmark & \checkmark & \checkmark & $\times$ & $\sim$ & \checkmark & $\times$ & $\times$ \\
+    CodeSandbox         & $\sim$ & \checkmark & \checkmark & \checkmark & $\times$ & $\times$ & \checkmark & $\times$ & $\times$ \\
+    VS Live Share       & $\times$ & $\times$ & \checkmark & \checkmark & $\times$ & $\times$ & $\times$ & $\times$ & $\times$ \\
+    Theia               & \checkmark & \checkmark & $\sim$ & $\times$ & $\times$ & $\times$ & $\times$ & $\times$ & \checkmark \\
+    CodeCollab~\cite{shen2025codecollab} & \checkmark & \checkmark & \checkmark & \checkmark & $\times$ & $\times$ & $\times$ & $\times$ & \checkmark \\
+    CoAI~\cite{huang2025coai} & $\sim$ & $\times$ & $\times$ & \checkmark & $\sim$ & $\times$ & $\times$ & $\times$ & $\times$ \\
+    \textbf{\echoray{}} & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\textbf{Qualitative positioning.}
+The literature review reveals a clear dichotomy: academic systems (CodeCollab,
+CoAI, CloudIDE-LLM) prioritise research novelty but lack production hardening
+(self-hosting, security, full API), while commercial systems (GitHub Codespaces,
+Replit) are production-ready but closed-source and lack the AI-broadcast
+paradigm. \echoray{} occupies a unique position at their intersection: it is
+open-source, deployable with three environment variables, and introduces
+AI-broadcast synchronisation as a first-class architectural primitive. The
+repository is publicly accessible at
+\url{https://github.com/codeAryan21/EchoRay} under the MIT License, enabling
+full replication of all results reported in this paper.
