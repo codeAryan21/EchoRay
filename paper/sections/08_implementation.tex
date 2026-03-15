@@ -1,0 +1,257 @@
+%% ============================================================
+\section{Implementation}
+\label{sec:implementation}
+%% ============================================================
+
+\subsection{Technology Stack Overview}
+
+\echoray{} is a full-stack TypeScript monorepo with two independent
+deployable units: the \textbf{client} (Next.js~15 application) and the
+\textbf{server} (Express~5 + Socket.io~4 API). All production dependency
+versions are pinned in \texttt{package.json}.
+
+\subsubsection{Exact Production Dependency Versions}
+
+\begin{table}[H]
+  \centering
+  \caption{Pinned production dependencies for \echoray{} (March 2026).}
+  \label{tab:deps}
+  \renewcommand{\arraystretch}{1.05}
+  \begin{tabular}{llp{6cm}}
+    \toprule
+    \textbf{Package} & \textbf{Version} & \textbf{Purpose} \\
+    \midrule
+    \multicolumn{3}{l}{\textit{Client (Next.js application)}} \\
+    \midrule
+    \texttt{next}                    & 15.3.3  & React SSR framework, App Router \\
+    \texttt{react}                   & \^{}19.0.0 & UI rendering \\
+    \texttt{@monaco-editor/react}    & \^{}4.7.0 & Browser-native VS Code editor \\
+    \texttt{@reduxjs/toolkit}        & \^{}2.8.2 & Predictable state management \\
+    \texttt{react-redux}             & \^{}9.2.0 & Redux React bindings \\
+    \texttt{@webcontainer/api}       & \^{}1.6.1 & Node.js WASM runtime \\
+    \texttt{socket.io-client}        & \^{}4.8.1 & WebSocket client \\
+    \texttt{axios}                   & \^{}1.9.0 & HTTP client with interceptors \\
+    \texttt{gsap}                    & \^{}3.13.0 & 60\,fps animation engine \\
+    \texttt{react-markdown}          & \^{}10.1.0 & AI response markdown rendering \\
+    \texttt{remark-gfm}              & \^{}4.0.1 & GFM (tables, strikethrough) \\
+    \texttt{dompurify}               & \^{}3.2.6 & XSS-safe HTML sanitisation \\
+    \texttt{react-hot-toast}         & \^{}2.5.2 & Non-blocking notifications \\
+    \texttt{tailwindcss}             & \^{}4.0   & Utility-first CSS \\
+    \midrule
+    \multicolumn{3}{l}{\textit{Server (Express API + Socket.io)}} \\
+    \midrule
+    \texttt{express}                 & \^{}5.1.0  & HTTP framework (major upgrade to v5) \\
+    \texttt{socket.io}               & \^{}4.8.1  & WebSocket server \\
+    \texttt{@google/generative-ai}   & \^{}0.24.1 & Gemini SDK \\
+    \texttt{@prisma/client}          & \^{}6.10.1 & ORM with type-safe queries \\
+    \texttt{@prisma/extension-accelerate} & \^{}1.3.0 & Edge-cached query layer \\
+    \texttt{bcrypt}                  & \^{}5.1.1  & Password hashing \\
+    \texttt{jsonwebtoken}            & \^{}9.0.2  & JWT sign/verify \\
+    \texttt{ioredis}                 & \^{}5.6.1  & Redis client (token blacklist) \\
+    \texttt{zod}                     & \^{}3.25.67 & Runtime input validation \\
+    \texttt{helmet}                  & \^{}8.1.0  & HTTP security headers \\
+    \texttt{cookie-parser}           & \^{}1.4.7  & Cookie middleware \\
+    \texttt{morgan}                  & \^{}1.10.0 & HTTP request logging \\
+    \texttt{typescript}              & \^{}5.8.3  & Type-safe JavaScript superset \\
+    \texttt{prisma}                  & \^{}6.9.0  & Schema + migration tooling \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsubsection{Hardware and Infrastructure Requirements}
+
+\begin{table}[H]
+  \centering
+  \caption{Minimum, recommended, and production infrastructure requirements.}
+  \label{tab:hw}
+  \begin{tabular}{lccc}
+    \toprule
+    \textbf{Component} & \textbf{Minimum} & \textbf{Recommended} & \textbf{Production} \\
+    \midrule
+    Server CPU  & 0.5 vCPU & 2 vCPU & 4+ vCPU \\
+    Server RAM  & 512\,MB  & 2\,GB  & 4\,GB \\
+    PostgreSQL  & shared   & 2\,GB RAM & Managed (Supabase/RDS) \\
+    Redis       & 25\,MB   & 256\,MB & Upstash/ElastiCache \\
+    Client CPU  & Any modern browser & --- & --- \\
+    Client WASM & SharedArrayBuffer support required & --- & --- \\
+    Network     & 100\,Mbps & 1\,Gbps & CDN + load balancer \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\textbf{WebContainer WASM requirements.} The WebContainer API requires the
+following browser headers, which must be configured on the server serving the
+HTML:
+\begin{center}
+\texttt{Cross-Origin-Opener-Policy: same-origin}\\
+\texttt{Cross-Origin-Embedder-Policy: require-corp}
+\end{center}
+These enable \texttt{SharedArrayBuffer}, which WebAssembly threads require.
+
+\subsection{Golden Snippet: The AI-Broadcast Core}
+
+The most critical innovation in \echoray{} is the tight coupling of the
+AI service, Socket.io broadcast, and file-tree mount in a single asynchronous
+workflow. The \textbf{Golden Snippet}---the minimal code expressing this
+innovation---spans three files.
+
+\subsubsection{Server-Side AI Invocation and Broadcast}
+
+\begin{lstlisting}[
+  caption={Golden Snippet Part 1: Socket.io event handler with AI routing
+    (\texttt{server/src/socket.ts}).},
+  label=lst:golden_socket,
+  language=Java,
+]
+socket.on("project-message", async (data: any) => {
+  const message = data.message;
+  const aiIsPresentInMessage = message.includes("@ai");
+
+  // 1. Always rebroadcast the user's raw message first
+  //    (so peers see the query before the AI responds)
+  socket.broadcast
+        .to(socket.roomId!)
+        .emit("project-message", data);
+
+  // 2. If @ai prefix detected, invoke Gemini asynchronously
+  if (aiIsPresentInMessage) {
+    const prompt = message.replace("@ai", "");          // strip sentinel
+    const result = await generateResult(prompt);        // Gemini call
+
+    // 3. Broadcast AI response to ALL room members (including invoker)
+    io.to(socket.roomId!).emit("project-message", {
+      message: result,
+      sender: { _id: "ai", email: "AI" },
+    });
+  }
+});
+\end{lstlisting}
+
+\subsubsection{AI Service: Gemini Configuration}
+
+\begin{lstlisting}[
+  caption={Golden Snippet Part 2: Gemini model configuration with JSON mode
+    and expert system instruction (\texttt{server/src/services/ai.service.ts}).},
+  label=lst:golden_ai,
+  language=Java,
+]
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+
+const model = genAI.getGenerativeModel({
+  model: "gemini-2.5-flash",
+  generationConfig: {
+    responseMimeType: "application/json",   // enforce JSON output schema
+    temperature: 0.4,                       // deterministic code generation
+  },
+  systemInstruction: `You are an expert JavaScript/MERN developer.
+    Always respond in JSON:
+    {
+      "text": "<explanation>",
+      "fileTree": {
+        "<filename>": { "file": { "contents": "<code>" } }
+      },
+      "buildCommand": { "mainItem": "npm", "commands": ["install"] },
+      "startCommand": { "mainItem": "node",  "commands": ["app.js"]  }
+    }`,
+});
+
+export const generateResult = async (prompt: any): Promise<string> => {
+  const result = await model.generateContent(prompt);
+  return result.response.text();                        // raw JSON string
+};
+\end{lstlisting}
+
+\subsubsection{Client-Side: WebContainer Mount from AI Response}
+
+\begin{lstlisting}[
+  caption={Golden Snippet Part 3: Parsing AI response and mounting generated
+    file tree into the WebContainer runtime
+    (\texttt{client/app/project/[id]/page.tsx}).},
+  label=lst:golden_wc,
+  language=Java,
+]
+// On receiving an AI message from the socket:
+const handleAIMessage = async (rawResult: string) => {
+  const parsed = JSON.parse(rawResult);               // { text, fileTree }
+
+  // Display the explanation in the chat
+  setMessages(prev => [...prev, {
+    message: parsed.text,
+    sender: { _id: "ai", email: "AI" }
+  }]);
+
+  // If the AI generated code, merge it into the project file tree
+  if (parsed.fileTree) {
+    const mergedTree = { ...fileTree, ...parsed.fileTree };
+    setFileTree(mergedTree);                           // update React state
+
+    // Mount directly into the live WebContainer instance
+    const wc = await getWebContainerInstance();
+    await wc.mount(parsed.fileTree);                  // zero-copy WASM mount
+
+    // Install dependencies if a buildCommand is present
+    if (parsed.buildCommand) {
+      const installProc = await wc.spawn(
+        parsed.buildCommand.mainItem,
+        parsed.buildCommand.commands
+      );
+      await installProc.exit;
+    }
+  }
+};
+\end{lstlisting}
+
+\subsection{Database Schema}
+
+The Prisma schema defines two models with a many-to-many self-join:
+
+\begin{lstlisting}[
+  caption={Prisma schema (\texttt{server/prisma/schema.prisma}).},
+  label=lst:schema,
+  language=Java,
+]
+model User {
+  id        Int       @id @default(autoincrement())
+  email     String    @unique
+  password  String
+  createdAt DateTime  @default(now())
+  projects  Project[] @relation("ProjectUsers")
+}
+
+model Project {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  fileTree  Json?    // Stores FileTree as JSON blob
+  leaderId  Int
+  createdAt DateTime @default(now())
+  users     User[]   @relation("ProjectUsers")
+}
+\end{lstlisting}
+
+\subsection{API Endpoint Catalogue}
+
+\begin{table}[H]
+  \centering
+  \caption{Complete REST API endpoint catalogue with authentication status.}
+  \label{tab:api}
+  \begin{tabular}{lllp{4.5cm}}
+    \toprule
+    \textbf{Method} & \textbf{Path} & \textbf{Auth} & \textbf{Description} \\
+    \midrule
+    POST & \texttt{/api/v1/user/register}       & No  & Register new user \\
+    POST & \texttt{/api/v1/user/login}           & No  & Login, set cookie \\
+    GET  & \texttt{/api/v1/user/logout}          & Yes & Blacklist token \\
+    GET  & \texttt{/api/v1/user/profile}         & Yes & Get own profile \\
+    GET  & \texttt{/api/v1/user/all}             & Yes & List all other users \\
+    POST & \texttt{/api/v1/project/create}       & Yes & Create project \\
+    GET  & \texttt{/api/v1/project/getAll}       & Yes & List own projects \\
+    GET  & \texttt{/api/v1/project/get-project/:id} & Yes & Get project by ID \\
+    POST & \texttt{/api/v1/project/add-user}     & Yes & Add collaborators (leader) \\
+    DELETE & \texttt{/api/v1/project/remove-user} & Yes & Remove users (leader) \\
+    DELETE & \texttt{/api/v1/project/delete/:id} & Yes & Delete project (leader) \\
+    PUT  & \texttt{/api/v1/project/update-file-tree} & Yes & Save file tree \\
+    GET  & \texttt{/api/v1/ai/get-result}        & No  & Direct AI query \\
+    GET  & \texttt{/health}                      & No  & Health check \\
+    \bottomrule
+  \end{tabular}
+\end{table}

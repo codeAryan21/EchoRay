@@ -1,0 +1,439 @@
+%% ============================================================
+\section{Methodology}
+\label{sec:methodology}
+%% ============================================================
+
+This section presents the complete technical methodology of \echoray{},
+covering the data-structure design, system-level algorithms, mathematical
+formalisation of core operations, and the information-flow model that unifies
+all subsystems. Every claim is grounded in the actual source code.
+
+%% ------------------------------------------------------------------
+\subsection{Core Data Structures}
+\label{sub:ds}
+%% ------------------------------------------------------------------
+
+\echoray{} is built around three canonical data structures that flow
+unchanged across all system layers.
+
+\begin{definition}[FileTree]
+  \label{def:filetree}
+  A \emph{FileTree} $\mathcal{F}$ is a partial function
+  \[
+    \mathcal{F} : \text{FileName} \;\to\; \bigl\{\,\texttt{file}: \{\texttt{contents}: \text{string}\}\,\bigr\}
+  \]
+  where $\text{FileName} \subseteq \Sigma^+$ is a set of valid identifiers
+  (no directory separators). The domain $\mathrm{dom}(\mathcal{F})$ represents
+  the virtual project file system.
+\end{definition}
+
+\begin{definition}[Project]
+  \label{def:project}
+  A \emph{Project} $P$ is a tuple
+  \[
+    P = (id, name, \mathcal{F}, leaderId, U, t_c)
+  \]
+  where $id \in \mathbb{Z}_{>0}$, $name \in \Sigma^+$,
+  $\mathcal{F}$ is a FileTree (\cref{def:filetree}),
+  $leaderId \in \mathbb{Z}_{>0}$, $U \subseteq \mathbb{Z}_{>0}$ is the set of
+  collaborator user identifiers ($leaderId \in U$), and $t_c$ is the creation
+  timestamp.
+\end{definition}
+
+\begin{definition}[Message]
+  \label{def:message}
+  A \emph{Message} $m$ is a tuple
+  \[
+    m = (\textit{text}, \textit{sender}) \quad
+    \text{where } \textit{sender} = (\textit{id}, \textit{email})
+  \]
+  A message is an \emph{AI invocation} if $\textit{text}$ contains the
+  sentinel prefix \texttt{@ai}.
+\end{definition}
+
+\begin{definition}[AIResponse]
+  \label{def:airesponse}
+  An \emph{AIResponse} $r$ is a JSON object
+  \[
+    r = \bigl\{\texttt{text}: s,\; \texttt{fileTree}: \mathcal{F}'\bigr\}
+  \]
+  where $s \in \Sigma^*$ is a natural-language explanation and
+  $\mathcal{F}'$ is an optional FileTree increment (may be empty).
+\end{definition}
+
+%% ------------------------------------------------------------------
+\subsection{Mathematical Model of the Collaboration Protocol}
+\label{sub:math}
+%% ------------------------------------------------------------------
+
+\subsubsection{State Space}
+
+Let $\mathcal{S}_n$ denote the server-held state at discrete time step $n$.
+The state is a triple:
+
+\begin{equation}
+  \mathcal{S}_n = \bigl( \mathcal{P}_n,\; \mathcal{C}_n,\; \mathcal{B}_n \bigr)
+  \label{eq:state}
+\end{equation}
+
+\noindent where $\mathcal{P}_n$ is the set of all projects (each carrying
+their current FileTree), $\mathcal{C}_n$ is the set of active Socket.io
+connections partitioned into rooms, and $\mathcal{B}_n$ is the Redis token
+blacklist---a set of invalidated JWT strings.
+
+\subsubsection{File-Tree Merge Operation}
+
+When a collaborator saves a file tree $\mathcal{F}^*$, the server applies
+a total-replace merge:
+
+\begin{equation}
+  \mathcal{F}_{n+1} \;=\; \mathcal{F}^*
+  \label{eq:merge_lww}
+\end{equation}
+
+This implements \emph{last-writer-wins} (LWW) semantics. While LWW does not
+preserve concurrent edits, it satisfies eventual consistency trivially:
+
+\begin{proposition}[LWW Eventual Consistency]
+  \label{prop:lvc}
+  Under LWW, if no new writes occur after time $n_0$, then for all replicas
+  $r$, $\lim_{n \to \infty} \mathcal{F}_n^r = \mathcal{F}_{n_0}$.
+\end{proposition}
+
+\begin{proof}
+  The server is the single authoritative replica. Upon a
+  \texttt{PUT /update-file-tree} request at time $n_0$, the server stores
+  $\mathcal{F}^*$ persistently. Any subsequent read returns $\mathcal{F}^*$
+  unchanged. All clients synchronise by re-reading the project, converging to
+  $\mathcal{F}^*$. \qed
+\end{proof}
+
+\subsubsection{AI Response Latency Model}
+
+Let $\lambda$ be the Gemini API throughput (tokens per second) and $\kappa$
+be the expected number of output tokens for a prompt $p$. The expected AI
+response latency $\mathbb{E}[T_{ai}]$ decomposes as:
+
+\begin{equation}
+  \mathbb{E}[T_{ai}(p)] \;=\; T_{network} \;+\; T_{queue} \;+\; \frac{\kappa(p)}{\lambda}
+  \label{eq:latency}
+\end{equation}
+
+\noindent where $T_{network}$ is the round-trip network latency to Google's
+API endpoint, $T_{queue}$ is the server-side queuing delay under concurrent
+load, and $\kappa(p)/\lambda$ is the generation time. Fitting this model to
+the empirical measurements in \cref{sec:results} yields:
+$T_{network} \approx 180\,\text{ms}$, $\lambda \approx 150\,\text{tokens/s}$,
+with $\kappa$ growing linearly with prompt complexity.
+
+\subsubsection{Token Blacklist Security Proof}
+
+\begin{theorem}[Blacklist Completeness]
+  \label{thm:blacklist}
+  Let $\tau$ be a JWT with expiry $\exp(\tau)$ issued at time $t_0$.
+  If the user logs out at time $t_1 \leq \exp(\tau)$, then no request bearing
+  $\tau$ is authenticated after $t_1$.
+\end{theorem}
+
+\begin{proof}
+  At logout, the server executes:
+  \[
+    \textsc{Redis.setEx}\bigl(\tau,\; \exp(\tau) - \lfloor t_1 \rfloor,\; \texttt{"1"}\bigr)
+  \]
+  For any subsequent request $t_2 > t_1$ bearing $\tau$:
+  \begin{enumerate}[leftmargin=*, label=\textit{Case \arabic*.}]
+    \item $t_2 \leq \exp(\tau)$: JWT signature verification passes, but
+      $\textsc{Redis.get}(\tau) = \texttt{"1"} \neq \emptyset$, so the
+      \texttt{authMiddleware} returns HTTP~401.
+    \item $t_2 > \exp(\tau)$: JWT signature verification fails
+      (\texttt{TokenExpiredError}), returning HTTP~401 before the Redis check.
+  \end{enumerate}
+  In both cases, the request is rejected. \qed
+\end{proof}
+
+\subsubsection{RBAC Authorisation Decision Function}
+
+Define the authorisation decision function $\mathcal{A}$:
+
+\begin{equation}
+  \mathcal{A}(u, P, \omega) =
+  \begin{cases}
+    \textsc{Allow} & \text{if } \omega \notin \Omega_{\text{priv}} \\
+    \textsc{Allow} & \text{if } \omega \in \Omega_{\text{priv}} \;\land\; P.\textit{leaderId} = u.\textit{id} \\
+    \textsc{Deny}  & \text{otherwise}
+  \end{cases}
+  \label{eq:rbac}
+\end{equation}
+
+\noindent where $\Omega_{\text{priv}} = \{\textsc{AddUsers},\, \textsc{RemoveUsers},\,
+\textsc{DeleteProject}\}$ is the set of privileged operations.
+
+\begin{corollary}[Privilege Separation]
+  \label{cor:priv}
+  No member $u$ with $P.\textit{leaderId} \neq u.\textit{id}$ can successfully
+  execute any operation in $\Omega_{\text{priv}}$ on project $P$ under
+  $\mathcal{A}$.
+\end{corollary}
+
+\begin{proof}
+  Follows directly from the third case of \cref{eq:rbac}. \qed
+\end{proof}
+
+%% ------------------------------------------------------------------
+\subsection{System-Level Algorithms}
+\label{sub:algorithms}
+%% ------------------------------------------------------------------
+
+\subsubsection{User Registration and Authentication Pipeline}
+
+\Cref{alg:auth_pipeline} presents the complete authentication pipeline from
+registration through subsequent request authorisation.
+
+\begin{algorithm}[H]
+\caption{Authentication Pipeline (\texttt{user.service.ts},
+  \texttt{auth.middleware.ts}, \texttt{redis.service.ts})}
+\label{alg:auth_pipeline}
+\begin{algorithmic}[1]
+\Procedure{Register}{$email, password$}
+  \State Validate via \textsc{CreateUserSchema}($email, password$) \Comment{Zod}
+  \If{$\exists u \in \mathcal{U} : u.email = email$}
+    \State \textbf{raise} \texttt{UserAlreadyExists}
+  \EndIf
+  \State $h \gets \textsc{Bcrypt.hash}(password, 10)$ \Comment{$\approx$100\,ms}
+  \State $\mathcal{U} \gets \mathcal{U} \cup \{(email, h)\}$ \Comment{Prisma INSERT}
+  \State \Return $(id, email)$
+\EndProcedure
+
+\Procedure{Login}{$email, password$}
+  \State $u \gets \textsc{Prisma.user.findUnique}(email)$
+  \If{$u = \emptyset$ \textbf{or} $\lnot\textsc{Bcrypt.compare}(password, u.h)$}
+    \State \textbf{raise} \texttt{InvalidCredentials}
+  \EndIf
+  \State $\tau \gets \textsc{JWT.sign}(\{id: u.id\}, \textit{secret}, \textit{ttl}=\text{1d})$
+  \State Set \texttt{HttpOnly} \texttt{Secure} cookie $\leftarrow \tau$
+  \State \Return $\tau$
+\EndProcedure
+
+\Procedure{AuthMiddleware}{$req$}
+  \State $\tau \gets req.cookies.token \;\|\; req.headers.authorization$
+  \If{$\tau = \emptyset$} \Return \texttt{HTTP 401} \EndIf
+  \If{$\textsc{Redis.get}(\tau) \neq \emptyset$}
+    \State Clear cookie; \Return \texttt{HTTP 401 (blacklisted)}
+  \EndIf
+  \State $decoded \gets \textsc{JWT.verify}(\tau, \textit{secret})$
+  \State $req.user \gets \textsc{Prisma.user.findUnique}(decoded.id)$
+  \State \Call{next}{}
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+\subsubsection{Project Lifecycle Management}
+
+\Cref{alg:project_lifecycle} presents the complete project service, including
+the RBAC guards for privileged operations.
+
+\begin{algorithm}[H]
+\caption{Project Service (\texttt{project.service.ts})}
+\label{alg:project_lifecycle}
+\begin{algorithmic}[1]
+\Procedure{CreateProject}{$name, userId$}
+  \State Validate \textsc{CreateProjectSchema}
+  \State $P \gets \textsc{Prisma.project.create}(name, leaderId=userId, users=\{userId\})$
+  \State \Return $P$
+\EndProcedure
+
+\Procedure{AddUsers}{$projectId, users[], userId$}
+  \State $P \gets \textsc{Prisma.project.findFirst}(id=projectId, users \ni userId)$
+  \If{$P = \emptyset$} \textbf{raise} \texttt{NotAuthorised} \EndIf
+  \If{$P.leaderId \neq userId$} \textbf{raise} \texttt{NotLeader} \EndIf
+  \State $\textsc{Prisma.project.update}(connect: users)$ \Comment{avoids duplicates}
+  \State \Return updated project
+\EndProcedure
+
+\Procedure{UpdateFileTree}{$projectId, \mathcal{F}^*$}
+  \State Validate \textsc{UpdateFileTreeSchema}
+  \State $\textsc{Prisma.project.update}(fileTree = \mathcal{F}^*)$ \Comment{atomic LWW}
+  \State \Return updated project
+\EndProcedure
+\end{algorithmic}
+\end{algorithm}
+
+%% ------------------------------------------------------------------
+\subsection{Full Information-Flow Diagram}
+\label{sub:flowchart}
+%% ------------------------------------------------------------------
+
+\Cref{fig:methodology_flow} presents the complete information-flow diagram
+of \echoray{}, mapping every user action to its system-level pathway.
+
+\begin{figure}[H]
+  \centering
+  \begin{tikzpicture}[
+    font=\footnotesize,
+    node distance=0.45cm and 0.7cm,
+    start/.style={circle, draw, thick, fill=green!25, minimum size=0.6cm},
+    stop/.style={circle, draw, thick, fill=red!25, minimum size=0.6cm, double},
+    proc/.style={rectangle, rounded corners=3pt, draw, thick, fill=blue!8,
+                 minimum width=3.1cm, minimum height=0.65cm, text centered},
+    decision/.style={diamond, aspect=1.8, draw, thick, fill=orange!15,
+                     minimum width=3cm, minimum height=0.65cm, text centered},
+    io/.style={trapezium, trapezium left angle=70, trapezium right angle=110,
+               draw, thick, fill=yellow!15, minimum width=2.8cm, minimum height=0.65cm,
+               text centered},
+    arr/.style={-Stealth, thick},
+    yes/.style={font=\tiny, midway, right=1pt},
+    no/.style={font=\tiny, midway, above=1pt},
+  ]
+    %% ── Column 1: User actions ───────────────────────────────
+    \node[start]   (s)   at (0,0)    {};
+    \node[io]      (req) [below=of s]  {HTTP/WS Request};
+    \node[decision](auth)[below=0.6cm of req]  {Token valid?};
+    \node[proc]    (blk) [right=2.2cm of auth] {Return 401};
+    \node[decision](route)[below=0.6cm of auth] {Route type?};
+
+    %% ── REST branch ──────────────────────────────────────────
+    \node[proc]    (ctrl)[below left=0.5cm and 0.5cm of route] {Controller};
+    \node[proc]    (zod) [below=0.45cm of ctrl] {Zod Validate};
+    \node[decision](zodok)[below=0.45cm of zod] {Valid?};
+    \node[proc]    (zerr)[right=1.8cm of zodok] {Return 400};
+    \node[proc]    (svc) [below=0.45cm of zodok]{Service Layer};
+    \node[decision](rbac)[below=0.45cm of svc]  {RBAC pass?};
+    \node[proc]    (raerr)[right=1.8cm of rbac] {Return 403};
+    \node[proc]    (prisma)[below=0.45cm of rbac]{Prisma ORM};
+    \node[proc]    (pg)   [below=0.45cm of prisma]{PostgreSQL};
+    \node[io]      (resp) [below=0.45cm of pg]  {JSON Response};
+
+    %% ── WebSocket branch ─────────────────────────────────────
+    \node[proc]    (room) [below right=0.5cm and 0.5cm of route]{Join Room};
+    \node[io]      (recv) [below=0.45cm of room] {project-message};
+    \node[decision](aiprx)[below=0.45cm of recv] {Contains @ai?};
+    \node[proc]    (bcast)[right=1.8cm of aiprx] {Broadcast to room};
+    \node[proc]    (aisvc)[below=0.45cm of aiprx]{AI Service};
+    \node[proc]    (gem)  [below=0.45cm of aisvc]{Gemini 2.5 Flash};
+    \node[proc]    (parse)[below=0.45cm of gem]  {JSON Parse};
+    \node[proc]    (allbc)[below=0.45cm of parse] {io.to(room).emit};
+    \node[stop]    (e)    [below=1.2cm of resp]  {};
+
+    %% ── Arrows: top ──────────────────────────────────────────
+    \draw[arr] (s) -- (req);
+    \draw[arr] (req) -- (auth);
+    \draw[arr] (auth) -- node[no]{No} (blk);
+    \draw[arr] (auth) -- node[yes]{Yes} (route);
+    \draw[arr] (route) -- node[no]{REST} (ctrl);
+    \draw[arr] (route) -- node[yes]{WSS} (room);
+
+    %% ── REST path ────────────────────────────────────────────
+    \draw[arr] (ctrl) -- (zod);
+    \draw[arr] (zod) -- (zodok);
+    \draw[arr] (zodok) -- node[no]{No} (zerr);
+    \draw[arr] (zodok) -- node[yes]{Yes} (svc);
+    \draw[arr] (svc) -- (rbac);
+    \draw[arr] (rbac) -- node[no]{No} (raerr);
+    \draw[arr] (rbac) -- node[yes]{Yes} (prisma);
+    \draw[arr] (prisma) -- (pg);
+    \draw[arr] (pg) -- (resp);
+    \draw[arr] (resp) -- (e);
+
+    %% ── WebSocket path ───────────────────────────────────────
+    \draw[arr] (room) -- (recv);
+    \draw[arr] (recv) -- (aiprx);
+    \draw[arr] (aiprx) -- node[no]{No} (bcast);
+    \draw[arr] (aiprx) -- node[yes]{Yes} (aisvc);
+    \draw[arr] (aisvc) -- (gem);
+    \draw[arr] (gem) -- (parse);
+    \draw[arr] (parse) -- (allbc);
+    \draw[arr] (allbc.south) -- ++(0,-0.3) -- ++(-5.5,0) -- (e.east);
+
+  \end{tikzpicture}
+  \caption{Complete information-flow diagram of \echoray{}. Left branch:
+    REST API path through controller, Zod validation, RBAC, service layer,
+    Prisma ORM, and PostgreSQL. Right branch: WebSocket path through room
+    management, message routing, AI service, Gemini~2.5~Flash, and
+    all-member broadcast.}
+  \label{fig:methodology_flow}
+\end{figure}
+
+%% ------------------------------------------------------------------
+\subsection{Input Validation Algebra}
+\label{sub:zod}
+%% ------------------------------------------------------------------
+
+\echoray{}'s Zod schemas form a composable \emph{validation algebra}.
+Let $\mathcal{Z}$ be the set of all Zod schemas. For any schema
+$S \in \mathcal{Z}$ and input value $v$, the \emph{parse} operation is:
+
+\begin{equation}
+  \textsc{Parse}(S, v) =
+  \begin{cases}
+    (\textsc{Ok},\; v') & \text{if } v \text{ satisfies all constraints of } S \\
+    (\textsc{Err},\; E) & \text{otherwise, where } E \text{ is a structured error set}
+  \end{cases}
+  \label{eq:zod_parse}
+\end{equation}
+
+The composite schema for user registration is:
+\begin{equation}
+  S_{\text{register}} = \textsc{Object}\bigl\{
+    \texttt{email}: \textsc{String}.\textsc{email}(),\;\;
+    \texttt{password}: \textsc{String}.\textsc{min}(6)
+  \bigr\}
+  \label{eq:register_schema}
+\end{equation}
+
+The file-tree schema uses a \emph{record} type to enforce that all values
+are valid JSON objects without constraining their keys:
+\begin{equation}
+  S_{\mathcal{F}} = \textsc{Record}\bigl(\textsc{String},\; \textsc{Any}\bigr)
+  \label{eq:filetree_schema}
+\end{equation}
+
+This design allows the file tree to evolve freely while preventing
+non-object payloads (e.g., strings, arrays) that would corrupt the
+database column and crash the WebContainer mount operation.
+
+%% ------------------------------------------------------------------
+\subsection{AI Prompt Processing Pipeline}
+\label{sub:ai_method}
+%% ------------------------------------------------------------------
+
+The AI processing pipeline involves three transformation stages:
+
+\begin{equation}
+  \underbrace{m_{\text{raw}}}_{\text{chat msg}}
+  \xrightarrow{\;\textsc{Strip@ai}\;}
+  \underbrace{p}_{\text{clean prompt}}
+  \xrightarrow{\;\textsc{Gemini}\;}
+  \underbrace{r_{\text{raw}}}_{\text{JSON string}}
+  \xrightarrow{\;\textsc{Parse}\;}
+  \underbrace{r = (\textit{text},\, \mathcal{F}')}_{\text{structured response}}
+  \label{eq:pipeline}
+\end{equation}
+
+\noindent \textbf{Stage 1 --- Prefix stripping:}
+\[
+  p = m_{\text{raw}}.\textsc{replace}\bigl(/\texttt{@ai}\backslash\texttt{s*}/i,\; \texttt{""}\bigr)
+\]
+
+\noindent \textbf{Stage 2 --- Gemini generation:}
+The model is configured with a \emph{system instruction} that anchors its
+persona and enforces the output schema. The generation is temperature-controlled:
+
+\begin{equation}
+  P_\theta(w_t \mid w_{<t}) \propto \exp\!\left(\frac{\text{logit}(w_t)}{T}\right),
+  \quad T = 0.4
+  \label{eq:temperature}
+\end{equation}
+
+At $T = 0.4$, the softmax distribution is sharpened relative to the default
+($T = 1.0$), favouring higher-probability (syntactically predictable) tokens.
+This is the theoretical basis for the improved code correctness observed at
+sub-unit temperatures~\cite{chen2021evaluating}.
+
+\noindent \textbf{Stage 3 --- JSON parsing and schema enforcement:}
+\[
+  r = \textsc{JSON.parse}(r_{\text{raw}})
+\]
+
+If $\mathcal{F}' \neq \emptyset$, the parsed file tree is directly broadcastable
+to the Socket.io room and mountable by the WebContainer API because both consume
+the identical JSON structure defined in \cref{def:filetree}.

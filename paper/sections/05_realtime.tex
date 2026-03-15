@@ -1,0 +1,180 @@
+%% ============================================================
+\section{Real-Time Collaboration Engine}
+\label{sec:realtime}
+%% ============================================================
+
+\subsection{Overview}
+
+Real-time collaboration in \echoray{} is mediated by a Socket.io server
+running within the same Node.js process as the REST API
+(\texttt{server/src/server.ts}).  The collaboration engine handles three
+categories of events:
+
+\begin{enumerate}[leftmargin=*, label=(\roman*)]
+  \item \textbf{Chat messages} --- textual content broadcast to all project
+    members in a Socket.io room.
+  \item \textbf{AI invocations} --- chat messages prefixed with \texttt{@ai}
+    that trigger asynchronous Gemini queries followed by AI-response
+    broadcasts.
+  \item \textbf{File-tree updates} --- the client persists the current file
+    tree via a REST \texttt{PUT} call; in-progress edits flow through the
+    Monaco Editor instance without further real-time diffing.
+\end{enumerate}
+
+\subsection{Connection Lifecycle and Room Management}
+
+\Cref{alg:socket_lifecycle} presents the connection lifecycle.
+
+\begin{algorithm}[H]
+\caption{Socket.io Connection Lifecycle (\texttt{socket.ts})}
+\label{alg:socket_lifecycle}
+\begin{algorithmic}[1]
+\Require{Incoming socket with \texttt{handshake.auth.token} and
+         \texttt{handshake.query.projectId}}
+\State $token \gets \texttt{socket.handshake.auth.token}$
+\State $projectId \gets \texttt{socket.handshake.query.projectId}$
+\State $user \gets \textsc{VerifyJWT}(token)$  \Comment{throws on invalid}
+\State $project \gets \textsc{GetProjectById}(projectId)$
+\If{$user.id \notin project.users$}
+  \State \textsc{Disconnect}(socket, \texttt{"unauthorised"})
+\EndIf
+\State $socket.user \gets user$
+\State $socket.project \gets project$
+\State $socket.roomId \gets projectId.\textsc{toString}()$
+\State $socket.\textsc{join}(socket.roomId)$  \Comment{join project room}
+\State \textbf{on} \texttt{"project-message"} $\Rightarrow$ \Call{HandleMessage}{socket, data}
+\State \textbf{on} \texttt{"disconnect"} $\Rightarrow$ log departure
+\end{algorithmic}
+\end{algorithm}
+
+The room model ensures that Socket.io events are scoped to a single project:
+the \texttt{socket.broadcast.to(roomId).emit()} call delivers messages to
+every socket in the same room except the sender, providing natural isolation
+between concurrent projects.
+
+\subsection{Message Handling Protocol}
+
+The \texttt{project-message} event carries a payload conforming to the
+following TypeScript interface (defined in \texttt{utils/type.ts}):
+
+\begin{lstlisting}[caption={Message payload type.}, label=lst:msgtype]
+interface MessagePayload {
+  message: string;          // raw chat text (may contain @ai prefix)
+  sender: {
+    id: number;
+    email: string;
+  };
+}
+\end{lstlisting}
+
+Upon receipt, the server executes the routing logic shown in
+\cref{alg:msg_routing}. Non-AI messages are immediately re-broadcast; AI
+messages trigger an asynchronous Gemini query before broadcasting.
+
+\begin{algorithm}[H]
+\caption{Message Routing (\texttt{socket.ts::HandleMessage})}
+\label{alg:msg_routing}
+\begin{algorithmic}[1]
+\Require{socket with bound room, incoming \texttt{data} payload}
+\State $\texttt{socket.broadcast.to}(roomId).\texttt{emit}(\text{"project-message"}, data)$
+\If{$data.message.\textsc{startsWith}(\texttt{"@ai"})}$
+  \State $prompt \gets data.message.\textsc{replace}(\texttt{"@ai"}, \texttt{""})$
+  \State $result \gets \textsc{AwaitAIService.generateResult}(prompt)$
+  \State Build $aiPayload$ with $sender = \{id: 0, email: \texttt{"AI"}\}$
+  \State $\texttt{io.to}(roomId).\texttt{emit}(\text{"project-message"}, aiPayload)$
+\EndIf
+\end{algorithmic}
+\end{algorithm}
+
+Note the distinction between \texttt{socket.broadcast} (all sockets in room
+\emph{except} the sender) and \texttt{io.to} (all sockets in room
+\emph{including} the sender). Regular chat messages are rebroadcast with
+\texttt{socket.broadcast} because the sender's own UI has already rendered the
+message locally; AI responses are emitted with \texttt{io.to} to guarantee the
+invoker also receives the response.
+
+\subsection{File-Tree Synchronisation}
+
+The file tree is the central artefact of every project. The synchronisation
+strategy in \echoray{} follows a \emph{last-writer-wins} model:
+
+\begin{enumerate}[leftmargin=*, label=\arabic*.]
+  \item User edits a file in the Monaco Editor component
+    (\texttt{components/CodeEditor.tsx}).
+  \item The \texttt{project/[id]/page.tsx} component maintains the entire
+    file tree in React state and propagates changes via the
+    \texttt{updateFileTree} callback.
+  \item On save (explicit user action), the client issues
+    \texttt{PUT /api/v1/project/update-file-tree} with the full serialised
+    tree.
+  \item The server overwrites the \texttt{Project.fileTree} JSON column.
+  \item Other collaborators refresh by re-loading the project or receiving
+    a future socket event.
+\end{enumerate}
+
+This approach sacrifices concurrent-edit conflict resolution (no OT/CRDT) in
+favour of implementation clarity. The trade-off is appropriate for the primary
+use case---structured pair-programming and code generation sessions---where a
+single user typically drives editing while others observe.
+
+\subsection{WebContainer Integration}
+
+Live code preview is provided by the WebContainer API
+(\texttt{config/Webcontainer.ts}), which boots a full Node.js~18 runtime
+inside the browser's Service Worker context using WebAssembly. The
+initialisation is guarded by a singleton pattern to prevent multiple
+concurrent boot calls:
+
+\begin{lstlisting}[caption={WebContainer singleton initialisation.},
+  label=lst:wc]
+let webcontainerInstance: WebContainer | null = null;
+
+export async function getWebContainerInstance(): Promise<WebContainer> {
+  if (!webcontainerInstance) {
+    webcontainerInstance = await WebContainer.boot();
+  }
+  return webcontainerInstance;
+}
+\end{lstlisting}
+
+The file tree—stored in PostgreSQL as the \texttt{Project.fileTree} JSON
+object—is directly mountable by calling \texttt{webcontainer.mount(fileTree)},
+because the storage format (Equation~\ref{eq:filetree}) matches the
+WebContainer \texttt{FileSystemTree} specification verbatim.
+
+\subsection{Socket.io Client Configuration}
+
+On the client side, the Socket.io connection is lazily initialised in
+\texttt{config/socketIo.ts}:
+
+\begin{lstlisting}[caption={Socket.io client singleton
+  (\texttt{config/socketIo.ts}).}, label=lst:socket_client]
+import { io, Socket } from "socket.io-client";
+
+let socket: Socket;
+
+export const initSocket = (
+  token: string,
+  projectId: string | number
+): Socket => {
+  socket = io(process.env.NEXT_PUBLIC_API_URL!, {
+    auth: { token },
+    query: { projectId },
+    transports: ["websocket"],
+  });
+  return socket;
+};
+
+export const getSocket = (): Socket => socket;
+\end{lstlisting}
+
+Forcing \texttt{transports: ["websocket"]} eliminates the HTTP long-poll
+upgrade handshake, reducing connection establishment latency by approximately
+one round-trip.
+
+\subsection{Redux State Integration}
+
+The front-end state layer (\texttt{store/}) maintains a minimal Redux slice
+(\texttt{userSlice.ts}) tracking the authenticated user's identity. Socket
+events update React component state directly via hooks, keeping real-time data
+out of Redux to avoid unnecessary re-renders from high-frequency events.
