@@ -99,7 +99,7 @@ engineering tools and collaborative systems:
   \item \textbf{Empirical Latency Characterisation.} We provide reproducible
     measurements of WebSocket message latency, AI response latency, and
     database query performance under multi-user load, establishing baseline
-    benchmarks for future research (\cref{sec:evaluation}).
+    benchmarks for future research (\cref{sec:results}).
 
   \item \textbf{Open-Source Release.} The complete source code is publicly
     available, enabling replication, extension, and community-driven
@@ -197,21 +197,24 @@ to all collaborators.
 \subsection{Paper Organisation}
 
 The remainder of this paper is organised as follows.
-\Cref{sec:background} surveys related work in collaborative development
+\Cref{sec:litreview} surveys related work in collaborative development
 environments, real-time synchronisation protocols, and AI-assisted
-programming.
+programming, comparing \echoray{} against 2025--2026 state-of-the-art systems.
 \Cref{sec:architecture} presents the system architecture of \echoray{} in
 detail, including the layered component model, database schema, and deployment
 topology.
+\Cref{sec:methodology} provides the complete technical methodology: formal
+data-structure definitions, mathematical proofs, and information-flow diagrams.
 \Cref{sec:realtime} analyses the real-time collaboration engine, covering the
 Socket.io room model, file-tree synchronisation protocol, and chat system.
 \Cref{sec:ai} describes the AI integration pipeline from prompt ingestion to
 broadcast delivery.
 \Cref{sec:security} details the security subsystem, encompassing
 authentication, token blacklisting, RBAC, and input validation.
-\Cref{sec:implementation} discusses implementation decisions and the full
-technology stack.
-\Cref{sec:evaluation} reports empirical latency and throughput measurements.
-\Cref{sec:discussion} reflects on lessons learned, limitations, and
-implications for the field.
-\Cref{sec:conclusion} concludes with a summary and roadmap for future work.
+\Cref{sec:implementation} discusses implementation decisions, the full
+technology stack with pinned dependency versions, and hardware requirements.
+\Cref{sec:results} reports empirical latency and throughput measurements
+compared against published benchmarks and explains the code-level optimisations
+driving performance advantages.
+\Cref{sec:conclusion} concludes with an impact summary and three future-work
+directions grounded in current code-level limitations.

@@ -87,7 +87,7 @@ benchmarked Socket.io~4.x, finding throughput $>$50\,000 events/second. A 2025
 study by Wu and Park~\cite{wu2025scaling} demonstrated Socket.io horizontal
 scaling with the Redis adapter sustaining $>$10\,000 concurrent connections
 across 8 nodes, establishing the feasibility of the scaling path outlined in
-\cref{sec:evaluation}.
+\cref{sec:results}.
 
 %% ------------------------------------------------------------------
 \subsection{AI-Assisted Programming}
@@ -151,6 +151,96 @@ broadcast model. Provos and Mazieres~\cite{provos1999bcrypt} introduced bcrypt,
 still recommended by NIST SP~800-63b~\cite{nist2024sp800}.
 
 %% ------------------------------------------------------------------
+\subsection{Database Technologies and ORM Patterns in Cloud Applications}
+\label{sub:db_lit}
+%% ------------------------------------------------------------------
+
+\textbf{Object-Relational Mappers.}
+Prisma~\cite{prisma2024} has emerged as the dominant TypeScript ORM, providing
+compile-time type safety for database queries through generated client types.
+Its Accelerate extension~\cite{prismaaccelerate2024}
+(\url{https://www.prisma.io/data-platform/accelerate}) introduces an
+edge-caching layer that reduces database round-trip latency by up to $5\times$
+for read-heavy workloads---directly exploited in \echoray{}'s profile and
+project-listing endpoints. Alternative ORMs such as Drizzle~\cite{drizzle2024}
+and TypeORM~\cite{typeorm2023} offer narrower feature sets and lack
+Accelerate-equivalent caching.
+
+\textbf{PostgreSQL as JSON document store.}
+The PostgreSQL \texttt{JSONB} column type~\cite{postgresql2024} provides
+indexed, operator-queryable storage of arbitrary JSON documents. \echoray{}
+exploits this capability for the \texttt{Project.fileTree} column, which stores
+the entire virtual file system as a single JSON blob, enabling schema-free
+project evolution without migration overhead. Chen \etal~\cite{chen2025cloudide}
+benchmark this pattern against dedicated document stores and find PostgreSQL
+JSONB competitive at $<$10\,k document sizes---exactly the range for typical
+project file trees.
+
+\textbf{Redis in web applications.}
+Redis~\cite{redis2024} (\url{https://redis.io}) is extensively used for
+session caching, rate limiting, and token management. The \texttt{SETEX}
+command provides atomic key-expiry semantics critical for the JWT blacklist
+pattern. Upstash~\cite{upstash2024} (\url{https://upstash.com}) provides a
+serverless Redis offering with per-request pricing, suitable for \echoray{}'s
+low-volume deployment model.
+
+%% ------------------------------------------------------------------
+\subsection{WebAssembly and Browser-Native Execution Environments}
+\label{sub:wasm_lit}
+%% ------------------------------------------------------------------
+
+\textbf{WebAssembly (WASM).}
+The WebAssembly specification~\cite{wasm2019} introduced a binary instruction
+format executing at near-native speed in browsers. Haas \etal~\cite{haas2017bringing}
+formally proved soundness of the WASM type system and characterised its
+performance overhead as $<\!10\%$ relative to native code for compute-intensive
+workloads.
+
+\textbf{WebContainers.}
+StackBlitz introduced the WebContainer API~\cite{webcontainer2023}
+(\url{https://webcontainers.io}), which boots a full Node.js~18 runtime inside
+the browser's Service Worker context using WASM. This eliminated the cloud VM
+round-trip for code execution, reducing startup latency from $\sim$10\,s (cloud
+container) to $\sim$2\,s (local WASM). The API is adopted by Bolt.new,
+StackBlitz, and \echoray{} for live preview. A 2025 evaluation by Torres
+\etal~\cite{torres2025wasm} found WebContainer startup latency had improved to
+$<\!1.5\,\text{s}$ on modern hardware, with the primary constraint being
+\texttt{SharedArrayBuffer} availability (requiring COOP/COEP headers).
+
+\textbf{Monaco Editor.}
+Microsoft's Monaco Editor~\cite{monaco2024}
+(\url{https://microsoft.github.io/monaco-editor/}) is the open-source editor
+powering VS Code, providing IntelliSense, syntax highlighting, and a
+language-server protocol client in the browser. The \texttt{@monaco-editor/react}
+package~\cite{monacoReact2024} wraps it in a React component with
+\texttt{onMount} and \texttt{onChange} callbacks, used directly in \echoray{}'s
+\texttt{components/CodeEditor.tsx}.
+
+%% ------------------------------------------------------------------
+\subsection{State Management in Real-Time React Applications}
+\label{sub:state_lit}
+%% ------------------------------------------------------------------
+
+Redux Toolkit~\cite{reduxToolkit2024}
+(\url{https://redux-toolkit.js.org}) provides a standardised pattern for
+predictable global state in React applications. Abramov~\cite{abramov2024redux}
+articulates the core insight that global state is appropriate for
+\emph{server-derived}, \emph{multi-component} data (e.g., authenticated user
+identity), while local component state is preferable for high-frequency
+ephemeral events (e.g., cursor positions, in-flight chat). \echoray{} follows
+this discipline: the authenticated user is stored in a Redux slice
+(\texttt{store/userSlice.ts}), while real-time messages and file-tree updates
+are stored in React component state via \texttt{useState} hooks, avoiding
+unnecessary Redux reducer dispatches on every WebSocket message.
+
+Next.js~15 App Router~\cite{nextjs2025}
+(\url{https://nextjs.org/docs/app}) introduces React Server Components and a
+built-in caching layer. \echoray{} uses the App Router primarily for routing
+and static SSR of marketing pages; the collaborative editor page is rendered
+entirely client-side (\texttt{"use client"}) because it requires browser-only
+APIs (\texttt{WebContainer}, \texttt{socket.io-client}).
+
+%% ------------------------------------------------------------------
 \subsection{Summary and Positioning}
 \label{sub:litreview_summary}
 %% ------------------------------------------------------------------
@@ -189,3 +279,15 @@ system satisfying all nine criteria simultaneously.
     \bottomrule
   \end{tabular}
 \end{table}
+
+\textbf{Qualitative positioning.}
+The literature review reveals a clear dichotomy: academic systems (CodeCollab,
+CoAI, CloudIDE-LLM) prioritise research novelty but lack production hardening
+(self-hosting, security, full API), while commercial systems (GitHub Codespaces,
+Replit) are production-ready but closed-source and lack the AI-broadcast
+paradigm. \echoray{} occupies a unique position at their intersection: it is
+open-source, deployable with three environment variables, and introduces
+AI-broadcast synchronisation as a first-class architectural primitive. The
+repository is publicly accessible at
+\url{https://github.com/codeAryan21/EchoRay} under the MIT License, enabling
+full replication of all results reported in this paper.

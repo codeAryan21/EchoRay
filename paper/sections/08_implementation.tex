@@ -255,3 +255,154 @@ model Project {
     \bottomrule
   \end{tabular}
 \end{table}
+
+\subsection{Development Environment Setup}
+\label{sub:devsetup}
+
+\echoray{} is designed for zero-friction local development. The complete setup
+requires three environment variable files and standard \texttt{npm} commands.
+
+\begin{lstlisting}[
+  caption={Server environment configuration (\texttt{server/.env}).},
+  label=lst:serverenv,
+  language=bash,
+]
+# Database (PostgreSQL - Supabase or Neon recommended)
+DATABASE_URL="postgresql://user:pass@host:5432/echoray?pgbouncer=true"
+DIRECT_URL="postgresql://user:pass@host:5432/echoray"
+
+# Prisma Accelerate (optional - for production caching)
+# https://www.prisma.io/data-platform/accelerate
+PRISMA_ACCELERATE_URL="prisma://accelerate.prisma-data.net/?api_key=..."
+
+# Redis (Upstash recommended for serverless)
+# https://upstash.com
+REDIS_URL="redis://default:password@hostname:6379"
+
+# JWT signing secret (min 32 chars for HS256 security)
+JWT_SECRET="your-super-secret-key-min-32-chars"
+
+# Google Gemini API key
+# https://aistudio.google.com/app/apikey
+GEMINI_API_KEY="AIzaSy..."
+
+# Client URL for CORS allow-list
+CLIENT_URL="http://localhost:3000"
+PORT=3001
+\end{lstlisting}
+
+\begin{lstlisting}[
+  caption={Client environment configuration (\texttt{client/.env.local}).},
+  label=lst:clientenv,
+  language=bash,
+]
+# Server API base URL
+NEXT_PUBLIC_API_URL="http://localhost:3001"
+\end{lstlisting}
+
+\begin{lstlisting}[
+  caption={Bootstrap commands to start \echoray{} for local development.},
+  label=lst:bootstrap,
+  language=bash,
+]
+# 1. Install all dependencies
+cd server && npm install
+cd ../client && npm install
+
+# 2. Generate Prisma client and run migrations
+cd ../server
+npx prisma generate
+npx prisma migrate deploy   # or: npx prisma db push
+
+# 3. Start the API server (port 3001)
+npm run dev
+
+# 4. In a separate terminal, start the Next.js frontend (port 3000)
+cd ../client && npm run dev
+
+# 5. Open http://localhost:3000 in your browser
+\end{lstlisting}
+
+The three-step setup---install, migrate, start---is intentional: no Docker
+compose, no Kubernetes manifests, no cloud accounts required for local
+development. The only external service required for full functionality is a
+PostgreSQL database; Redis and the Gemini API key are optional for basic
+use (token blacklisting and AI features are gracefully degraded when absent).
+
+\subsection{Production Deployment Architecture}
+\label{sub:proddeployment}
+
+\Cref{fig:deploy_arch} shows the recommended production deployment topology
+using fully managed cloud services.
+
+\begin{figure}[H]
+  \centering
+  \begin{tikzpicture}[
+    font=\footnotesize,
+    box/.style={rectangle, rounded corners=3pt, draw, thick,
+                minimum width=2.6cm, minimum height=0.75cm, text centered},
+    arr/.style={-Stealth, thick},
+    dasharr/.style={-Stealth, thick, dashed, gray},
+  ]
+    %% ── Client tier ─────────────────────────────────────────
+    \node[box, fill=blue!10]   (browser)  at (-4.5, 0)   {Browser\\(User)};
+    \node[box, fill=blue!15]   (vercel)   at (-4.5,-1.5) {Vercel CDN\\(Next.js 15)};
+
+    %% ── API tier ────────────────────────────────────────────
+    \node[box, fill=green!10]  (render)   at (0,    0)   {Render.com\\(Express + Socket.io)};
+    \node[box, fill=green!15]  (redis)    at (0,   -1.5) {Upstash Redis\\(Token Blacklist)};
+
+    %% ── Data tier ───────────────────────────────────────────
+    \node[box, fill=orange!10] (supabase) at (4.5,  0)   {Supabase\\(PostgreSQL)};
+    \node[box, fill=orange!15] (accelerate) at (4.5,-1.5){Prisma Accelerate\\(Query Cache)};
+
+    %% ── External AI ─────────────────────────────────────────
+    \node[box, fill=purple!10] (gemini)   at (0,    1.8) {Google Gemini\\2.5 Flash API};
+
+    %% ── Arrows ───────────────────────────────────────────────
+    \draw[arr]    (browser.east)    -- node[above]{\tiny HTTPS/WSS} (render.west);
+    \draw[arr]    (browser.south)   -- node[right]{\tiny SSR/Static} (vercel.north);
+    \draw[arr]    (render.south)    -- node[right]{\tiny SETEX/GET} (redis.north);
+    \draw[arr]    (render.east)     -- node[above]{\tiny Prisma ORM} (supabase.west);
+    \draw[arr]    (supabase.south)  -- node[right]{\tiny Cache Layer} (accelerate.north);
+    \draw[dasharr](accelerate.west) -- node[below]{\tiny cached reads} (render.east |- accelerate);
+    \draw[arr]    (render.north)    -- node[right]{\tiny generateContent} (gemini.south);
+  \end{tikzpicture}
+  \caption{Recommended production deployment topology for \echoray{}.
+    Browser clients connect to the Vercel-hosted Next.js frontend via HTTPS
+    and to the Render-hosted API server via WebSocket (WSS). The API server
+    communicates with Supabase PostgreSQL through Prisma Accelerate (for
+    cached reads) and Upstash Redis (for token blacklisting), and calls the
+    Google Gemini API for AI code generation.}
+  \label{fig:deploy_arch}
+\end{figure}
+
+\subsection{TypeScript Configuration}
+
+Both client and server use strict TypeScript configurations. The server's
+\texttt{tsconfig.json} targets ES2022 with \texttt{moduleResolution: bundler}
+and \texttt{strict: true}, enabling all strict type-checking rules. The client
+inherits Next.js's default \texttt{tsconfig.json} which includes
+\texttt{paths} aliases and incremental compilation. Building the server
+produces a \texttt{dist/} directory containing transpiled JavaScript; the
+client is compiled by Next.js's Turbopack bundler~\cite{nextjs2025}
+(\url{https://nextjs.org/docs/architecture/turbopack}) for sub-second hot
+module replacement during development.
+
+\subsection{Continuous Integration and Quality Assurance}
+
+While the current repository does not yet include a CI/CD pipeline (identified
+as a future work item in \cref{sec:conclusion}), the project enforces code
+quality through ESLint~\cite{eslint2024} (\url{https://eslint.org}) with the
+Next.js recommended rule set (\texttt{eslint.config.mjs}), PostCSS for
+TailwindCSS processing (\texttt{postcss.config.mjs}), and TypeScript strict
+mode to catch type errors at compile time. The build commands are:
+
+\begin{itemize}[leftmargin=*]
+  \item \texttt{cd client \&\& npm run build} --- Next.js production build
+    (Turbopack, output to \texttt{.next/})
+  \item \texttt{cd server \&\& npm run build} --- TypeScript compilation
+    (tsc, output to \texttt{dist/})
+  \item \texttt{cd server \&\& npx prisma migrate deploy} --- Apply pending
+    Prisma migrations to the target database
+\end{itemize}

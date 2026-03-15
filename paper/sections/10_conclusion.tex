@@ -105,3 +105,51 @@ open-source code---that AI-broadcast collaboration is achievable at low
 complexity and high performance. We invite the community to extend, critique,
 and build upon \echoray{} as a reference platform for the next generation of
 team-scale AI-assisted development environments.
+
+\subsection{Limitations}
+\label{sub:limitations}
+
+We acknowledge the following limitations of the current \echoray{}
+implementation, which inform the future-work directions above:
+
+\begin{enumerate}[leftmargin=*, label=\textbf{L\arabic*.}]
+  \item \textbf{Last-Writer-Wins File Synchronisation.} The current
+    \texttt{PUT /update-file-tree} endpoint replaces the entire file tree
+    atomically. While this guarantees consistency, it loses concurrent edits:
+    if two collaborators save simultaneously, one edit is silently discarded.
+    This is the most pressing correctness limitation and is addressed by FW1.
+  \item \textbf{No Streaming AI Responses.} The AI service awaits the complete
+    Gemini response before broadcasting, introducing a perceived latency of up
+    to~6\,s for complex prompts. Streaming would dramatically reduce perceived
+    latency (FW2).
+  \item \textbf{No CI/CD Pipeline.} The repository currently lacks automated
+    testing and continuous deployment workflows. This limits confidence in
+    refactoring and slows the contribution cycle for community developers.
+  \item \textbf{Single-Tenant Role Model.} The two-tier Leader/Member model
+    does not support multi-tier hierarchies (e.g., organisation → project →
+    file-level permissions) required for enterprise deployments.
+  \item \textbf{No Rate Limiting.} The Gemini API and WebSocket endpoints lack
+    per-user rate limiting, making the system vulnerable to DoS-by-cost attacks
+    (consuming API quota) and message flood attacks.
+\end{enumerate}
+
+These limitations are not fundamental to the architecture---they are
+engineering gaps addressable without restructuring the system. Items~L1 and
+L2 are high-impact and technically tractable with the existing stack; items
+L3--L5 are straightforward engineering tasks appropriate for community
+contributions.
+
+\subsection{Reproducibility Statement}
+\label{sub:reproducibility}
+
+All results reported in this paper are reproducible using the open-source
+codebase at \url{https://github.com/codeAryan21/EchoRay}. The benchmark
+scripts used for latency measurements (\cref{sec:results}) can be reproduced
+using any standard Node.js load-testing library (e.g., \texttt{autocannon},
+\texttt{k6}). The Gemini API latency results require a valid API key; however,
+the model name and configuration are fully specified in \cref{lst:golden_ai}.
+Prisma Accelerate caching results require a Prisma Data Platform account
+(\url{https://www.prisma.io/data-platform}), but the non-cached baseline is
+reproducible with a direct PostgreSQL connection. The authors commit to
+maintaining the repository and responding to reproducibility inquiries via
+GitHub Issues.

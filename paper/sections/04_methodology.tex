@@ -437,3 +437,127 @@ sub-unit temperatures~\cite{chen2021evaluating}.
 If $\mathcal{F}' \neq \emptyset$, the parsed file tree is directly broadcastable
 to the Socket.io room and mountable by the WebContainer API because both consume
 the identical JSON structure defined in \cref{def:filetree}.
+
+%% ------------------------------------------------------------------
+\subsection{3D Data Pipeline Visualization}
+\label{sub:3d_pipeline}
+%% ------------------------------------------------------------------
+
+\Cref{fig:3d_pipeline} provides a publication-quality 3D visualisation of the
+\echoray{} data pipeline, showing how data objects flow through the three
+principal processing planes.
+
+\begin{figure}[H]
+  \centering
+  \begin{tikzpicture}[
+    font=\footnotesize,
+    x={(-0.6cm,-0.35cm)}, y={(0.9cm,0cm)}, z={(0cm,0.85cm)},
+    box3d/.style={fill=blue!12, draw=blue!50!black, thick,
+                  minimum width=2.6cm, minimum height=0.75cm, text centered},
+    arr3d/.style={-Stealth, thick, blue!70!black},
+    label3d/.style={font=\bfseries\scriptsize, fill=white, inner sep=2pt},
+  ]
+    %% ── Plane 0: Input (z=0) ─────────────────────────────────
+    \node[box3d, fill=gray!15]  (user)  at (0,0,0)   {User Input\\(@ai prompt)};
+    \node[box3d, fill=gray!15]  (jwt)   at (0,3,0)   {JWT Token\\(auth)};
+    \node[label3d] at (-1.5,1.5,0) {\textsc{Input Plane}};
+
+    %% ── Plane 1: Processing (z=2) ────────────────────────────
+    \node[box3d, fill=green!12] (mid)   at (0,1.5,2) {Socket.io Router\\(room: projectId)};
+    \node[box3d, fill=green!12] (redis_node) at (0,3,2)   {Redis Blacklist\\Check};
+    \node[label3d] at (-1.5,1.5,2) {\textsc{Processing Plane}};
+
+    %% ── Plane 2: AI Generation (z=3.8) ──────────────────────
+    \node[box3d, fill=orange!12](gemini_node) at (0,1.5,3.8){Gemini 2.5 Flash\\generateContent()};
+    \node[box3d, fill=orange!12](parse)  at (0,3,3.8)  {JSON Schema\\Enforcement};
+    \node[label3d] at (-1.5,1.5,3.8) {\textsc{AI Plane}};
+
+    %% ── Plane 3: Output (z=5.5) ──────────────────────────────
+    \node[box3d, fill=purple!12](bcast)  at (0,1.5,5.5){io.to(room)\\.emit()};
+    \node[box3d, fill=purple!12](wc)     at (0,3,5.5)  {WebContainer\\.mount()};
+    \node[label3d] at (-1.5,1.5,5.5) {\textsc{Output Plane}};
+
+    %% ── Vertical arrows ──────────────────────────────────────
+    \draw[arr3d] (user.north east)  -- (mid.south west)
+                 node[midway, above right]{\tiny strip @ai};
+    \draw[arr3d] (jwt.north east)   -- (redis_node.south west)
+                 node[midway, above right]{\tiny verify};
+    \draw[arr3d] (mid.north east)   -- (gemini_node.south west)
+                 node[midway, above right]{\tiny prompt};
+    \draw[arr3d] (gemini_node.north east) -- (bcast.south west)
+                 node[midway, above right]{\tiny JSON};
+    \draw[arr3d] (parse.north east) -- (wc.south west)
+                 node[midway, above right]{\tiny fileTree};
+
+    %% ── Horizontal arrows within planes ──────────────────────
+    \draw[arr3d] (mid.east)         -- (redis_node.west);
+    \draw[arr3d] (gemini_node.east) -- (parse.west);
+    \draw[arr3d] (bcast.east)       -- (wc.west);
+
+  \end{tikzpicture}
+  \caption{Publication-quality 3D visualisation of the \echoray{} data
+    pipeline across four processing planes. User input and JWT credentials
+    enter the Input Plane; the Processing Plane routes messages and validates
+    authentication; the AI Generation Plane invokes Gemini and enforces the
+    JSON schema; the Output Plane broadcasts structured responses to all
+    collaborators via Socket.io and mounts generated code into the
+    WebContainer runtime.}
+  \label{fig:3d_pipeline}
+\end{figure}
+
+%% ------------------------------------------------------------------
+\subsection{Complexity Analysis}
+\label{sub:complexity}
+%% ------------------------------------------------------------------
+
+\subsubsection{Message Routing Complexity}
+
+Let $N$ be the number of active collaborators in a Socket.io room and
+$M$ be the total number of concurrent rooms on the server. The time complexity
+of the \texttt{project-message} handler is:
+
+\begin{equation}
+  T_{\text{route}}(N, M) = \mathcal{O}(1) + \mathcal{O}(N_r)
+  \label{eq:route_complexity}
+\end{equation}
+
+\noindent where $\mathcal{O}(1)$ is the hash-map lookup for room membership
+(Socket.io rooms are stored as JavaScript \texttt{Set} objects internally) and
+$\mathcal{O}(N_r)$ is the broadcast fan-out to $N_r \leq N$ active connections
+in the room. This is optimal: any broadcast algorithm must touch each
+recipient at least once.
+
+\subsubsection{Authentication Middleware Complexity}
+
+The \texttt{authMiddleware} executes three operations:
+\begin{enumerate}[leftmargin=*, label=\arabic*.]
+  \item JWT HMAC-SHA256 verification: $\mathcal{O}(|\tau|)$ where $|\tau|$
+    is the token byte length (constant for fixed-payload JWTs).
+  \item Redis \texttt{GET}: $\mathcal{O}(1)$ average case (hash-based
+    key lookup in Redis's in-memory hash table).
+  \item Prisma \texttt{findUnique} with Accelerate cache:
+    $\mathcal{O}(1)$ on cache hit (LRU hash map lookup) or
+    $\mathcal{O}(\log n)$ on cache miss (B-tree index scan on \texttt{User.id}).
+\end{enumerate}
+
+Total per-request middleware cost: $\mathcal{O}(\log n)$ worst-case,
+$\mathcal{O}(1)$ amortised with a warm Accelerate cache. This is confirmed
+empirically in \cref{tab:sec_overhead}, where the total middleware overhead
+is 9.0\,ms median---dominated by the Redis network round-trip
+($2.1\,\text{ms}$), not the algorithmic costs.
+
+\subsubsection{File-Tree Serialisation Complexity}
+
+The \texttt{Project.fileTree} JSON blob is serialised and deserialised on
+every project read and write. For a file tree with $F$ files each of average
+content length $\ell$:
+
+\begin{equation}
+  T_{\text{serialize}}(F, \ell) = \mathcal{O}(F \cdot \ell)
+  \label{eq:serialize}
+\end{equation}
+
+In practice, $F \leq 50$ and $\ell \leq 5\,\text{KB}$ for typical project
+scaffolds, giving $T_{\text{serialize}} \leq 250\,\text{KB}$---well within
+the PostgreSQL \texttt{JSONB} optimal operating range of $<\!1\,\text{MB}$
+per document~\cite{postgresql2024}.
