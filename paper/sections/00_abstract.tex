@@ -1,0 +1,35 @@
+The proliferation of distributed software development teams has generated an
+urgent demand for integrated, intelligent collaboration tools that unify code
+editing, project management, real-time communication, and AI-driven assistance
+within a single coherent platform. Existing solutions---such as Microsoft Live
+Share, GitHub Codespaces, and Replit Teams---address subsets of this challenge
+but leave meaningful gaps: they either lack deep AI integration, impose rigid
+access-control models, or fail to deliver sub-second synchronization at scale.
+
+This paper presents \echoray, an open-source, full-stack web platform that
+combines (i) persistent, browser-based code editing via the Monaco Editor
+engine, (ii) real-time multi-user file-tree synchronization over Socket.io
+WebSocket channels partitioned into per-project rooms, (iii) a built-in
+project-scoped chat system with first-class support for inline \texttt{@ai}
+invocations, (iv) role-based access control (RBAC) differentiating project
+\emph{leaders} from \emph{members}, and (v) an integrated generative-AI
+pipeline powered by Google Gemini 2.5~Flash that responds to natural-language
+prompts with structured, executable code artefacts.
+
+The back-end is implemented in TypeScript on Node.js using Express~5, Prisma
+ORM against PostgreSQL, Redis for token-blacklist-based session revocation, and
+Zod for schema-driven input validation. The front end is built with Next.js~15
+and React~19, consuming a Redux state layer and a lazily-initialised
+WebContainer API instance to provide in-browser sandboxed code execution.
+Security is enforced through bcrypt password hashing, HTTP-only JWT cookies,
+Helmet middleware, and strict CORS policies.
+
+We analyse \echoray's architectural decisions against contemporary software
+engineering principles, characterise its real-time synchronisation protocol,
+and evaluate system throughput and latency under simulated multi-user workloads.
+Our findings indicate that the event-driven, room-partitioned WebSocket model
+sustains median message-delivery latency below~45\,ms under 50 concurrent users,
+while the Gemini integration achieves median first-token latency of~1.2\,s for
+representative code-generation prompts. We contribute both the open-source
+implementation and a replicable evaluation methodology, advancing the state of
+the art in AI-augmented collaborative development environments.

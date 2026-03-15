@@ -1,0 +1,205 @@
+%% ============================================================
+\section{Implementation and Technology Stack}
+\label{sec:implementation}
+%% ============================================================
+
+\subsection{Project Structure}
+
+\echoray{} is organised as a monorepo with two top-level directories:
+\texttt{client/} and \texttt{server/}, each with independent
+\texttt{package.json} manifests, \texttt{tsconfig.json} configurations, and
+build pipelines.
+
+\subsubsection{Server Structure}
+
+The server follows an MVC pattern with a services layer for business logic:
+
+\begin{verbatim}
+server/src/
+├── app.ts            — Express app setup (CORS, Helmet, Morgan)
+├── server.ts         — HTTP server bootstrap + Socket.io init
+├── socket.ts         — Real-time event handlers
+├── controllers/      — HTTP request handlers (thin layer)
+│   ├── user.controller.ts
+│   ├── project.controller.ts
+│   └── ai.controller.ts
+├── services/         — Business logic
+│   ├── user.service.ts
+│   ├── project.service.ts
+│   ├── ai.service.ts
+│   └── redis.service.ts
+├── routes/           — Express router definitions
+├── middlewares/      — auth.middleware.ts (JWT + Redis check)
+├── db/index.ts       — Prisma client (singleton + Accelerate)
+└── utils/            — auth.ts, schema.ts, type.ts
+\end{verbatim}
+
+\subsubsection{Client Structure}
+
+The client uses the Next.js App Router introduced in Next.js~13:
+
+\begin{verbatim}
+client/
+├── app/
+│   ├── page.tsx                — Root redirect to /home
+│   ├── layout.tsx              — Root layout (ReduxProvider)
+│   ├── signin/page.tsx         — Sign-in form
+│   ├── signup/page.tsx         — Registration form
+│   ├── logout/page.tsx         — Logout + redirect
+│   ├── home/page.tsx           — Project dashboard
+│   └── project/[id]/page.tsx   — Collaborative workspace (718 LOC)
+├── components/
+│   ├── CodeEditor.tsx          — Monaco Editor wrapper
+│   ├── ChatBox.tsx             — Real-time chat UI
+│   ├── ProjectFiles.tsx        — Virtual file tree navigator
+│   ├── IframePreview.tsx       — WebContainer live preview
+│   ├── CollaboratorList.tsx    — Active member display
+│   ├── AddCollaboratorModal.tsx— Collaborator management
+│   └── UserProtectWrapper.tsx  — Auth guard HOC
+├── config/
+│   ├── socketIo.ts             — Socket.io client singleton
+│   └── Webcontainer.ts         — WebContainer boot singleton
+└── store/
+    ├── index.ts                — Redux store configuration
+    ├── userSlice.ts            — User state reducer
+    └── ReduxProvider.tsx       — Provider wrapper
+\end{verbatim}
+
+\subsection{Key Technology Decisions}
+
+\subsubsection{Next.js 15 with App Router}
+
+Next.js~15 provides hybrid SSR/SSG rendering, file-system routing, and
+React~19 Server Components. For \echoray{}, the primary benefit is the
+App Router's support for nested layouts, enabling the project workspace
+(\texttt{project/[id]/page.tsx}) to be a rich client-side component while
+authentication pages benefit from server-side rendering for SEO and
+first-paint performance.
+
+\subsubsection{Monaco Editor}
+
+Monaco~\cite{monacoeditor2023}, the editor powering Visual Studio Code, is
+embedded via the \texttt{@monaco-editor/react} package. It provides:
+
+\begin{itemize}
+  \item Syntax highlighting for 60+ languages via TextMate grammars.
+  \item IntelliSense code completion backed by the TypeScript Language Server.
+  \item Multi-cursor editing, minimap, and diff views.
+  \item A programmatic API for reading/writing content, enabling integration
+    with \echoray{}'s file-tree state.
+\end{itemize}
+
+\subsubsection{Prisma ORM with Accelerate}
+
+Prisma generates fully typed query methods from the schema, eliminating
+runtime type errors at the database boundary. Prisma Accelerate adds:
+
+\begin{itemize}
+  \item A globally distributed connection pool (reducing cold-start latency
+    from serverless functions).
+  \item An LRU query cache with configurable TTLs, reducing median read
+    latency by~$\sim$73\% in our measurements (\cref{sec:evaluation}).
+\end{itemize}
+
+\subsubsection{TailwindCSS 4 and GSAP}
+
+TailwindCSS~4 introduces a JIT compiler and CSS variables-based theme system,
+reducing the need for custom CSS. GSAP (GreenSock Animation Platform) provides
+60\,fps declarative animations for page transitions and micro-interactions,
+improving perceived responsiveness.
+
+\subsubsection{Redux Toolkit}
+
+Redux Toolkit~\cite{reduxToolkit2023} provides a \emph{slice}-based API that
+collapses the boilerplate of traditional Redux (separate action creators,
+reducers, and thunks). The \texttt{userSlice} (\texttt{store/userSlice.ts})
+manages a single piece of state:
+
+\begin{lstlisting}[caption={Redux user slice.}, label=lst:redux]
+import { createSlice, PayloadAction } from "@reduxjs/toolkit";
+
+interface UserState { user: User | null; }
+
+const userSlice = createSlice({
+  name: "user",
+  initialState: { user: null } as UserState,
+  reducers: {
+    setUser: (state, action: PayloadAction<User>) => {
+      state.user = action.payload;
+    },
+    clearUser: (state) => {
+      state.user = null;
+    },
+  },
+});
+
+export const { setUser, clearUser } = userSlice.actions;
+export default userSlice.reducer;
+\end{lstlisting}
+
+\subsection{Build and Deployment Pipeline}
+
+\Cref{tab:buildpipeline} summarises the build pipeline steps for both
+front end and back end.
+
+\begin{table}[H]
+  \centering
+  \caption{Build and deployment pipeline summary.}
+  \label{tab:buildpipeline}
+  \begin{tabular}{lll}
+    \toprule
+    \textbf{Stage}     & \textbf{Frontend}           & \textbf{Backend} \\
+    \midrule
+    Type check         & \texttt{tsc --noEmit}       & \texttt{tsc --noEmit} \\
+    Build              & \texttt{next build}         & \texttt{tsc -p tsconfig.json} \\
+    Output             & \texttt{.next/} (SSR bundle) & \texttt{dist/} (JS) \\
+    Dev server         & \texttt{next dev} (port 3000)& \texttt{ts-node-dev} (port 5000) \\
+    Deploy target      & Vercel (auto-deploy on push) & Render/Railway \\
+    DB migration       & N/A                         & \texttt{prisma migrate deploy} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Configuration and Environment Variables}
+
+\Cref{tab:envvars} lists all required environment variables.
+
+\begin{table}[H]
+  \centering
+  \caption{Required environment variables for \echoray{} deployment.}
+  \label{tab:envvars}
+  \begin{tabular}{lll}
+    \toprule
+    \textbf{Variable}         & \textbf{Location} & \textbf{Purpose} \\
+    \midrule
+    \texttt{DATABASE\_URL}    & server            & PostgreSQL connection string \\
+    \texttt{JWT\_SECRET}      & server            & HMAC-SHA256 signing key \\
+    \texttt{AI\_API\_KEY}     & server            & Google Generative AI API key \\
+    \texttt{REDIS\_URL}       & server            & Redis connection URL \\
+    \texttt{NEXT\_PUBLIC\_API\_URL} & client     & Backend base URL \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Code Metrics}
+
+\Cref{tab:codemetrics} provides a quantitative overview of the codebase.
+
+\begin{table}[H]
+  \centering
+  \caption{Codebase metrics for \echoray{}.}
+  \label{tab:codemetrics}
+  \begin{tabular}{lrr}
+    \toprule
+    \textbf{Metric}            & \textbf{Frontend} & \textbf{Backend} \\
+    \midrule
+    Source files (.ts/.tsx)    & 25                & 23 \\
+    Lines of code (approx.)    & 1\,500+           & 800+ \\
+    Database models            & ---               & 2 \\
+    REST endpoints             & ---               & 14 \\
+    Socket.io event types      & 1 (bidirectional) & 1 \\
+    Redux slices               & 1                 & --- \\
+    Zod validation schemas     & ---               & 6 \\
+    \bottomrule
+  \end{tabular}
+\end{table}

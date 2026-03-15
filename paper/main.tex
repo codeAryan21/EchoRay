@@ -1,0 +1,163 @@
+%% ============================================================
+%%  EchoRay: An AI-Augmented Real-Time Collaborative
+%%  Development Environment
+%%
+%%  Submitted to IEEE Transactions on Software Engineering
+%%  IEEEtran document class — double-column journal format
+%% ============================================================
+\documentclass[journal,12pt,onecolumn]{IEEEtran}
+
+%% ── Core packages ─────────────────────────────────────────────
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{microtype}
+\usepackage{lmodern}
+
+%% ── Mathematics ───────────────────────────────────────────────
+\usepackage{amsmath,amssymb,amsthm}
+
+%% ── Graphics & Diagrams ───────────────────────────────────────
+\usepackage{graphicx}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usetikzlibrary{
+  shapes.geometric,
+  shapes.multipart,
+  arrows.meta,
+  positioning,
+  fit,
+  backgrounds,
+  decorations.pathmorphing,
+  shadows,
+  calc,
+  matrix
+}
+
+%% ── Tables ────────────────────────────────────────────────────
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{longtable}
+
+%% ── Code listings ─────────────────────────────────────────────
+\usepackage{listings}
+\usepackage{xcolor}
+\definecolor{codebg}{RGB}{248,248,248}
+\definecolor{codegreen}{RGB}{0,128,0}
+\definecolor{codegray}{RGB}{128,128,128}
+\definecolor{codepurple}{RGB}{148,0,211}
+\definecolor{codeblue}{RGB}{0,0,200}
+\lstdefinestyle{typescript}{
+  backgroundcolor=\color{codebg},
+  commentstyle=\color{codegreen}\itshape,
+  keywordstyle=\color{codeblue}\bfseries,
+  stringstyle=\color{codepurple},
+  basicstyle=\ttfamily\footnotesize,
+  breakatwhitespace=false,
+  breaklines=true,
+  keepspaces=true,
+  numbers=left,
+  numbersep=5pt,
+  numberstyle=\tiny\color{codegray},
+  showspaces=false,
+  showstringspaces=false,
+  showtabs=false,
+  tabsize=2,
+  frame=single,
+  rulecolor=\color{gray!30},
+  xleftmargin=2em,
+  xrightmargin=0.5em,
+}
+\lstset{style=typescript}
+
+%% ── Hyperlinks & References ───────────────────────────────────
+\usepackage[
+  colorlinks=true,
+  linkcolor=blue!70!black,
+  citecolor=green!50!black,
+  urlcolor=blue!80!black
+]{hyperref}
+\usepackage{cleveref}
+
+%% ── Layout & Spacing ──────────────────────────────────────────
+\usepackage{geometry}
+\geometry{
+  letterpaper,
+  top=1in, bottom=1in,
+  left=1.25in, right=1.25in
+}
+\usepackage{setspace}
+\onehalfspacing
+\usepackage{parskip}
+\setlength{\parskip}{6pt}
+
+%% ── Miscellaneous ─────────────────────────────────────────────
+\usepackage{enumitem}
+\usepackage{subcaption}
+\usepackage{float}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{cite}
+\usepackage{url}
+\usepackage{balance}
+\usepackage{flushend}
+
+%% ── Custom commands ───────────────────────────────────────────
+\newcommand{\echoray}{\textsc{EchoRay}}
+\newcommand{\etal}{\textit{et al.}}
+\newtheorem{definition}{Definition}
+\newtheorem{theorem}{Theorem}
+\newtheorem{proposition}{Proposition}
+
+%% ─────────────────────────────────────────────────────────────
+\begin{document}
+
+%% ── Title block ───────────────────────────────────────────────
+\title{\echoray: An AI-Augmented Real-Time Collaborative\\
+Development Environment with Role-Based Access Control\\
+and Large Language Model Integration}
+
+\author{
+  Aryan~Singh\IEEEmembership{Student Member,~IEEE}%
+  \IEEEcompsocitemizethanks{%
+    \IEEEcompsocthanksitem Manuscript received \today.
+    \IEEEcompsocthanksitem The authors thank the open-source community
+      whose tools made this work possible.
+  }
+}
+
+\markboth{IEEE Transactions on Software Engineering,~Vol.~XX,~No.~XX,~2026}%
+{Singh: \echoray{} --- AI-Augmented Collaborative Development Environment}
+
+\maketitle
+
+%% ── Abstract ─────────────────────────────────────────────────
+\begin{abstract}
+\input{sections/00_abstract}
+\end{abstract}
+
+\begin{IEEEkeywords}
+collaborative development environments, large language models, real-time
+systems, WebSocket, role-based access control, AI-assisted programming,
+code collaboration, software engineering tools
+\end{IEEEkeywords}
+
+%% ── Body ──────────────────────────────────────────────────────
+\input{sections/01_introduction}
+\input{sections/02_background}
+\input{sections/03_architecture}
+\input{sections/04_realtime}
+\input{sections/05_ai_integration}
+\input{sections/06_security}
+\input{sections/07_implementation}
+\input{sections/08_evaluation}
+\input{sections/09_discussion}
+\input{sections/10_conclusion}
+
+%% ── Bibliography ──────────────────────────────────────────────
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+
+\end{document}

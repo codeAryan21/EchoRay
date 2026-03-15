@@ -1,0 +1,157 @@
+%% ============================================================
+\section{Background and Related Work}
+\label{sec:background}
+%% ============================================================
+
+\subsection{Collaborative Development Environments}
+
+The concept of a \emph{Collaborative Development Environment} (CDE) predates
+the web era; early work by Dewan and Choudhary~\cite{dewan1995flexible}
+described multi-user programming environments based on shared data
+structures. The advent of cloud computing shifted CDEs to browser-based
+deployments, yielding a diverse ecosystem of tools.
+
+\textbf{Commercial platforms.}
+GitHub Codespaces~\cite{githubcodespaces2023} provides cloud-hosted VS Code
+instances accessible via any browser, with collaborative features mediated by
+the Live Share protocol. CodeSandbox~\cite{codesandbox2023} offers a
+browser-based sandbox with near-instant forking and preview deployment. Replit
+Teams~\cite{replit2024} supports real-time collaborative editing with built-in
+execution and an in-IDE AI assistant. StackBlitz~\cite{stackblitz2023}
+leverages WebContainers---running Node.js natively in the browser---to
+eliminate server-side execution dependencies entirely. Despite their maturity,
+these platforms are either proprietary (precluding scholarly replication),
+lack granular RBAC, or decouple AI assistance from the shared workspace.
+
+\textbf{Research prototypes.}
+Copdit~\cite{cheng2017codeit} explored peer-programming support in IDEs,
+identifying communication friction as the dominant bottleneck. CodeTogether
+(formerly eXprogramming)~\cite{codetogether2021} demonstrated that
+pair-programming productivity improves significantly when the \emph{driver}
+and \emph{navigator} share a live cursor and selection state. Sousa
+\etal~\cite{sousa2022realtime} proposed a CRDT-based collaborative editor
+achieving conflict-free merge in $O(1)$ time per operation, outperforming
+OT-based approaches for high-concurrency scenarios.
+
+\subsection{Real-Time Synchronisation Protocols}
+
+Real-time collaborative text editing is a well-studied problem with two
+dominant algorithmic families:
+
+\textbf{Operational Transformation (OT).}
+Introduced by Ellis and Gibbs~\cite{ellis1989concurrency} and subsequently
+formalised by Sun \etal~\cite{sun1998operational}, OT transforms concurrent
+operations to preserve document consistency. Google Docs employs a
+server-mediated OT variant~\cite{googledocs2010}. OT requires a central
+authority to order concurrent edits, which simplifies implementation but
+introduces a single point of contention.
+
+\textbf{Conflict-Free Replicated Data Types (CRDTs).}
+Proposed by Shapiro \etal~\cite{shapiro2011conflict}, CRDTs guarantee
+\emph{strong eventual consistency} without central coordination. Logoot
+\cite{weiss2009logoot} and LSEQ~\cite{nedelec2013lseq} adapt CRDT principles
+specifically to ordered sequence types (text documents), enabling fully
+peer-to-peer collaborative editing. Automerge~\cite{kleppmann2019local} and
+Yjs~\cite{nicolaescu2015yjs} provide production-grade JavaScript CRDT
+implementations used by tools including Notion and Liveblocks.
+
+\echoray{} adopts a \emph{server-relay} broadcast model via Socket.io rather
+than full OT or CRDT, serialising file-tree updates through the server to
+ensure authoritative consistency. This design trades theoretical generality
+for implementation simplicity and straightforward auditability, a trade-off we
+examine empirically in \cref{sec:evaluation}.
+
+\subsection{WebSocket and Event-Driven Architectures}
+
+The WebSocket protocol (RFC~6455~\cite{rfc6455}) provides full-duplex
+communication over a single TCP connection with minimal framing overhead.
+Socket.io~\cite{socketio2024} builds upon WebSocket (falling back to HTTP
+long-polling when necessary) with a high-level event API, automatic
+reconnection, and \emph{room}-based multicast, making it the de-facto choice
+for real-time web applications. Comparative benchmarks by
+Ramirez~\etal~\cite{ramirez2023benchmark} showed Socket.io achieving
+sub-50\,ms round-trip latency under 100 concurrent connections on commodity
+hardware, a result consistent with our own measurements in \cref{sec:evaluation}.
+
+\subsection{AI-Assisted Programming}
+
+The application of machine learning to source code has a rich history spanning
+statistical language models~\cite{hindle2012naturalness}, sequence-to-sequence
+architectures~\cite{bahdanau2015neural}, and, most recently, the Transformer
+model~\cite{vaswani2017attention}.
+
+\textbf{Large language models for code.}
+Codex~\cite{chen2021evaluating}, the model underpinning GitHub Copilot,
+demonstrated that fine-tuning GPT-3 on public code repositories yields
+remarkable code-completion capabilities. Subsequent models---StarCoder
+\cite{li2023starcoder}, Code Llama~\cite{roziere2023codellama}, and Google's
+Gemini~\cite{team2023gemini}---extended these capabilities to multi-file
+contexts, executable code generation, and structured output. Gemini~2.5~Flash,
+the LLM powering \echoray{}'s AI assistant, is specifically optimised for
+low-latency inference while maintaining strong reasoning capability, making it
+well-suited to interactive programming assistance.
+
+\textbf{Empirical studies of AI assistance.}
+Peng \etal~\cite{peng2023impact} found that developers using AI coding
+assistants completed a web-server task~55.8\% faster. Mozannar
+\etal~\cite{mozannar2024reading} studied how developers read and act on
+AI-generated code, finding that developers accept suggestions with low
+scrutiny---motivating structured, JSON-formatted AI output (as in \echoray{})
+to make AI contributions auditable. Vaithilingam \etal~\cite{vaithilingam2022expectation}
+identified \emph{context sharing} and \emph{prompt visibility} as barriers to
+effective AI assistance in team settings, exactly the gap our
+\emph{AI-broadcast} pattern addresses.
+
+\subsection{Authentication and Session Management}
+
+JSON Web Tokens (JWT)~\cite{jones2015rfc7519} are widely used for stateless
+authentication in REST APIs. However, their stateless nature complicates token
+revocation: once issued, a JWT remains valid until expiry unless an external
+revocation list is maintained. OWASP~\cite{owasp2024jwt} recommends
+server-side token blacklisting backed by a cache such as Redis for scenarios
+requiring immediate revocation (e.g., logout, password change, session
+hijacking response). \echoray{} implements this pattern, storing blacklisted
+tokens with a TTL equal to the token's remaining validity period.
+
+\subsection{Role-Based Access Control in Collaborative Systems}
+
+Ferraiolo and Kuhn~\cite{ferraiolo1992role} formalised RBAC as a policy model
+in which permissions are assigned to roles and roles are assigned to users.
+For collaborative software platforms, granular RBAC is essential: a project
+owner (``leader'') must be able to add or remove collaborators and delete the
+project, while ordinary members should have read/write access to project
+artefacts without administrative privileges. Sandhu \etal's RBAC96
+model~\cite{sandhu1996role} extended the original framework with role
+hierarchies and constraints, providing a formal foundation for the simpler
+two-role model implemented in \echoray{}.
+
+\subsection{Summary and Positioning of \echoray{}}
+
+\Cref{tab:related} summarises the most relevant tools along the five
+dimensions that \echoray{} targets. Unlike existing systems, \echoray{}
+simultaneously achieves open-source accessibility, AI-broadcast collaboration,
+fine-grained RBAC, browser-native execution, and comprehensive security
+mechanisms in a single, cohesive platform.
+
+\begin{table}[H]
+  \centering
+  \caption{Comparison of collaborative development platforms across key
+    dimensions. \checkmark = fully supported, $\sim$ = partially supported,
+    $\times$ = not supported.}
+  \label{tab:related}
+  \setlength{\tabcolsep}{4pt}
+  \begin{tabular}{lccccc}
+    \toprule
+    \textbf{Platform} & \textbf{Open} & \textbf{AI} & \textbf{AI} & \textbf{RBAC} & \textbf{In-browser} \\
+                      & \textbf{Source} & \textbf{Assist} & \textbf{Broadcast} & & \textbf{Execution} \\
+    \midrule
+    GitHub Codespaces  & $\times$ & \checkmark & $\times$ & $\sim$ & $\times$ \\
+    Replit Teams       & $\times$ & \checkmark & $\times$ & $\sim$ & \checkmark \\
+    CodeSandbox        & $\sim$   & \checkmark & $\times$ & $\times$ & \checkmark \\
+    StackBlitz         & $\sim$   & $\sim$     & $\times$ & $\times$ & \checkmark \\
+    VS Live Share      & $\times$ & \checkmark & $\times$ & $\times$ & $\times$ \\
+    Sousa \etal~(2022) & \checkmark & $\times$ & $\times$ & $\times$ & $\times$ \\
+    \textbf{\echoray{}} & \checkmark & \checkmark & \checkmark & \checkmark & \checkmark \\
+    \bottomrule
+  \end{tabular}
+\end{table}

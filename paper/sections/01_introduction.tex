@@ -1,0 +1,217 @@
+%% ============================================================
+\section{Introduction}
+\label{sec:intro}
+%% ============================================================
+
+\subsection{Motivation and Problem Statement}
+
+Software development has undergone a structural transformation over the past
+decade. The rise of geographically distributed teams, remote-first engineering
+cultures accelerated by the COVID-19 pandemic~\cite{ford2019remote}, and the
+emergence of \textit{AI pair-programming} tools such as GitHub
+Copilot~\cite{chen2021evaluating} and Cursor have collectively redefined what
+developers expect from their tooling.  Modern practitioners no longer regard
+the Integrated Development Environment (IDE) as a purely local, single-user
+artefact; they demand \emph{collaborative, cloud-native workspaces} that
+synchronise edits in real time, facilitate async and synchronous communication,
+and harness Large Language Models (LLMs) to accelerate routine programming
+tasks.
+
+Despite significant commercial investment, the current landscape of
+collaborative coding tools exhibits three persistent gaps:
+
+\begin{enumerate}[leftmargin=*, label=\textbf{G\arabic*.}]
+  \item \textbf{Siloed Functionality.} Tools such as Visual Studio Live Share
+    provide code synchronisation but require a local IDE installation and lack
+    integrated project management, persistent file storage, or AI assistance.
+    Conversely, AI coding assistants (Copilot, CodeWhisperer~\cite{amazon2023codewhisperer})
+    operate within individual developer contexts and offer no collaborative
+    workspace.
+
+  \item \textbf{Inadequate Access-Control Granularity.} Platforms such as
+    Replit and CodeSandbox offer collaborative editing but treat all
+    collaborators uniformly, precluding fine-grained ownership semantics
+    essential for enterprise and academic use cases where a designated
+    \emph{project leader} must control team membership and project lifecycle.
+
+  \item \textbf{Weak AI-Collaboration Coupling.} Existing tools append AI as
+    an afterthought---a side-panel chat disconnected from the shared workspace.
+    No widely-deployed open-source platform broadcasts AI-generated code
+    artefacts in real time to \emph{all} project collaborators simultaneously,
+    preserving shared context across the team.
+\end{enumerate}
+
+\subsection{Current Gap in Research}
+
+Recent literature (2024--2026) highlights the growing maturity of LLM-assisted
+programming. Wei \etal~\cite{wei2022chain} introduced chain-of-thought
+prompting, enabling models to reason step-by-step through complex coding
+tasks. Concurrent work by Peng \etal~\cite{peng2023impact} demonstrated
+a~55.8\% acceleration in task completion for programmers using AI assistance.
+Jiang \etal~\cite{jiang2024survey} surveyed 67 LLM-for-code studies and
+identified \emph{context sharing} as a primary unsolved challenge: when a team
+member invokes an AI assistant, the generated code lives only in their local
+context and must be manually shared.
+
+On the real-time systems side, studies of operational-transformation
+(OT)~\cite{sun1998operational} and conflict-free replicated data types
+(CRDTs)~\cite{shapiro2011conflict} underpin collaborative text editors such as
+Google Docs~\cite{googledocs2010} and Firepad. However, the majority of
+open-source implementations focus exclusively on text synchronisation, leaving
+file-tree management, binary artefacts, and project-scoped permission models
+as open engineering problems.
+
+From a security perspective, Almohri \etal~\cite{almohri2023security} and
+recent OWASP guidance on token management~\cite{owasp2024jwt} emphasise the
+inadequacy of stateless JWT invalidation---a gap that cloud-native platforms
+typically address through in-memory or distributed-cache token blacklists, an
+approach that \echoray systematically implements via Redis.
+
+Synthesising these threads, we identify a clear and actionable research
+opportunity: the design and rigorous evaluation of a \emph{unified},
+\emph{open-source} platform that integrates real-time code collaboration,
+role-based project governance, and AI-broadcast assistance within a single
+coherent architecture.
+
+\subsection{Novel Contributions}
+
+This paper makes the following contributions to the literature on software
+engineering tools and collaborative systems:
+
+\begin{enumerate}[leftmargin=*, label=\textbf{C\arabic*.}]
+  \item \textbf{Unified Architecture.} We present the complete design of
+    \echoray---a full-stack TypeScript platform coupling a Next.js~15 /
+    React~19 front end with an Express~5 / Prisma / PostgreSQL back end,
+    Socket.io real-time layer, Redis session management, and Google Gemini~2.5
+    Flash AI integration (\cref{sec:architecture}).
+
+  \item \textbf{AI-Broadcast Protocol.} We define and implement a novel
+    \emph{AI-broadcast} pattern in which a single \texttt{@ai} invocation in
+    the project chat triggers a Gemini query whose structured JSON response is
+    simultaneously delivered to all online collaborators in the same Socket.io
+    room (\cref{sec:ai}).
+
+  \item \textbf{RBAC-Gated Collaboration.} We describe a role-based access
+    model distinguishing \emph{leaders} from \emph{members} enforced at the
+    service layer, covering collaborator addition/removal, project deletion, and
+    file-tree ownership (\cref{sec:security}).
+
+  \item \textbf{Empirical Latency Characterisation.} We provide reproducible
+    measurements of WebSocket message latency, AI response latency, and
+    database query performance under multi-user load, establishing baseline
+    benchmarks for future research (\cref{sec:evaluation}).
+
+  \item \textbf{Open-Source Release.} The complete source code is publicly
+    available, enabling replication, extension, and community-driven
+    improvement.
+\end{enumerate}
+
+\subsection{Conceptual Overview}
+
+\Cref{fig:overview} presents a high-level conceptual diagram of \echoray,
+illustrating the three principal interaction planes: (1)~the \emph{User
+Interaction Plane} encompassing browser-based code editing, chat, and project
+management; (2)~the \emph{Real-Time Synchronisation Plane} mediated by
+Socket.io over WebSocket; and (3)~the \emph{AI Generation Plane} bridging
+natural-language chat prompts to LLM-generated code artefacts broadcast back
+to all collaborators.
+
+\begin{figure}[H]
+  \centering
+  \begin{tikzpicture}[
+    font=\small,
+    node distance=0.5cm and 1.2cm,
+    box/.style={
+      rectangle, rounded corners=4pt,
+      minimum width=2.6cm, minimum height=0.75cm,
+      text centered, draw, thick
+    },
+    plane/.style={
+      rectangle, rounded corners=6pt,
+      draw, dashed, thick,
+      inner sep=8pt
+    },
+    arr/.style={-Stealth, thick},
+    bidir/.style={Stealth-Stealth, thick},
+  ]
+
+  %% ── User Interaction Plane ────────────────────────────────
+  \node[box, fill=blue!15]  (editor)  {Monaco Editor};
+  \node[box, fill=blue!15, right=of editor]  (chat)    {Chat Box};
+  \node[box, fill=blue!15, right=of chat]    (filetree){File Tree};
+  \node[box, fill=blue!15, right=of filetree](preview) {Live Preview};
+
+  \begin{scope}[on background layer]
+    \node[plane, fit=(editor)(chat)(filetree)(preview),
+          label=above:\textbf{User Interaction Plane (Next.js / React)}]
+      (uiplane) {};
+  \end{scope}
+
+  %% ── Real-Time Synchronisation Plane ───────────────────────
+  \node[box, fill=green!20, below=1.4cm of editor]  (socket)  {Socket.io\\Server};
+  \node[box, fill=green!20, right=of socket]         (redis)   {Redis\\(Token Store)};
+  \node[box, fill=green!20, right=of redis]          (express) {Express 5\\REST API};
+  \node[box, fill=green!20, right=of express]        (prisma)  {Prisma ORM\\(PostgreSQL)};
+
+  \begin{scope}[on background layer]
+    \node[plane, fit=(socket)(redis)(express)(prisma),
+          label=above:\textbf{Real-Time Synchronisation \& API Plane (Node.js)}]
+      (rtplane) {};
+  \end{scope}
+
+  %% ── AI Generation Plane ───────────────────────────────────
+  \node[box, fill=orange!25, below=1.4cm of socket]  (aisvc)   {AI Service\\(ai.service.ts)};
+  \node[box, fill=orange!25, right=of aisvc]          (gemini)  {Google Gemini\\2.5 Flash};
+  \node[box, fill=orange!25, right=of gemini]         (jsonp)   {JSON Response\\Parser};
+
+  \begin{scope}[on background layer]
+    \node[plane, fit=(aisvc)(gemini)(jsonp),
+          label=above:\textbf{AI Generation Plane (Google Generative AI SDK)}]
+      (aiplane) {};
+  \end{scope}
+
+  %% ── Arrows: UI ↔ RT ──────────────────────────────────────
+  \draw[bidir] (editor.south)   -- ++(0,-0.5) -| (socket.north);
+  \draw[bidir] (chat.south)     -- ++(0,-0.3) -| (socket.north);
+  \draw[bidir] (filetree.south) -- ++(0,-0.3) -| (express.north);
+  \draw[arr]   (preview.south)  -- ++(0,-0.3) -| (prisma.north);
+
+  %% ── Arrows: RT ↔ AI ──────────────────────────────────────
+  \draw[arr]   (socket.south)   -- (aisvc.north)
+               node[midway, right=2pt]{\textit{@ai trigger}};
+  \draw[bidir] (aisvc.east)     -- (gemini.west);
+  \draw[arr]   (gemini.east)    -- (jsonp.west);
+  \draw[arr]   (jsonp.north)    -- ++(0,0.4) -| (socket.south)
+               node[near start, right=2pt]{\textit{broadcast}};
+
+  \end{tikzpicture}
+  \caption{Conceptual overview of \echoray{}. Three interaction planes---User
+    Interaction, Real-Time Synchronisation, and AI Generation---are connected
+    by bidirectional WebSocket channels and REST API calls. An \texttt{@ai}
+    trigger in the chat box propagates through the Socket.io server to the
+    Google Gemini LLM; the structured response is broadcast to every
+    collaborator in the project room.}
+  \label{fig:overview}
+\end{figure}
+
+\subsection{Paper Organisation}
+
+The remainder of this paper is organised as follows.
+\Cref{sec:background} surveys related work in collaborative development
+environments, real-time synchronisation protocols, and AI-assisted
+programming.
+\Cref{sec:architecture} presents the system architecture of \echoray{} in
+detail, including the layered component model, database schema, and deployment
+topology.
+\Cref{sec:realtime} analyses the real-time collaboration engine, covering the
+Socket.io room model, file-tree synchronisation protocol, and chat system.
+\Cref{sec:ai} describes the AI integration pipeline from prompt ingestion to
+broadcast delivery.
+\Cref{sec:security} details the security subsystem, encompassing
+authentication, token blacklisting, RBAC, and input validation.
+\Cref{sec:implementation} discusses implementation decisions and the full
+technology stack.
+\Cref{sec:evaluation} reports empirical latency and throughput measurements.
+\Cref{sec:discussion} reflects on lessons learned, limitations, and
+implications for the field.
+\Cref{sec:conclusion} concludes with a summary and roadmap for future work.

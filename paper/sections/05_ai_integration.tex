@@ -1,0 +1,174 @@
+%% ============================================================
+\section{AI Integration and LLM Pipeline}
+\label{sec:ai}
+%% ============================================================
+
+\subsection{Design Goals}
+
+The AI subsystem of \echoray{} is designed to satisfy three requirements:
+
+\begin{enumerate}[leftmargin=*, label=\textbf{R\arabic*.}]
+  \item \textbf{Low Latency.} Code-generation responses must be delivered
+    within a perceptually acceptable window ($<$3\,s) to maintain the
+    conversational flow of a collaborative session.
+  \item \textbf{Structured Output.} AI responses must be machine-parseable
+    JSON so that the front end can apply syntax highlighting, diff views, and
+    code insertion without unreliable regex extraction.
+  \item \textbf{Broadcast Consistency.} All project members must receive the
+    identical AI response simultaneously, ensuring shared context.
+\end{enumerate}
+
+\subsection{AI Service Implementation}
+
+The AI service is encapsulated in \texttt{server/src/services/ai.service.ts}.
+
+\begin{lstlisting}[caption={AI service---Gemini configuration and query method
+  (\texttt{ai.service.ts}).}, label=lst:aiservice]
+import { GoogleGenerativeAI } from "@google/generative-ai";
+
+const genAI = new GoogleGenerativeAI(process.env.AI_API_KEY!);
+
+const model = genAI.getGenerativeModel({
+  model: "gemini-2.5-flash",
+  generationConfig: {
+    responseMimeType: "application/json",
+    temperature: 0.4,
+  },
+  systemInstruction: `You are an expert JavaScript developer with
+    10+ years of experience in MERN stack. When asked to provide code
+    or explanation, always respond in JSON format:
+    { "text": "<explanation>", "fileTree": { "<filename>": {
+      "file": { "contents": "<code>" } }, ... } }`,
+});
+
+export const generateResult = async (prompt: string): Promise<string> => {
+  const result = await model.generateContent(prompt);
+  return result.response.text();
+};
+\end{lstlisting}
+
+Several implementation choices warrant discussion:
+
+\textbf{Model selection (gemini-2.5-flash).}
+Gemini~2.5~Flash is Google's latency-optimised variant of the Gemini~2.5
+family, providing a favourable latency--quality trade-off for interactive
+applications. The model supports JSON-mode output via
+\texttt{responseMimeType: "application/json"}, eliminating prompt-engineering
+gymnastics required to coerce older models into structured output.
+
+\textbf{Temperature ($T = 0.4$).}
+A temperature below the default ($T = 1.0$) biases the model towards more
+deterministic, syntactically predictable output. This is appropriate for code
+generation, where correctness and reproducibility are more important than
+creative diversity. Wei \etal~\cite{wei2022chain} and subsequent calibration
+studies corroborate that $T \in [0.2, 0.6]$ yields the best code-generation
+accuracy.
+
+\textbf{System instruction.}
+The system instruction anchors the model to a specific persona (experienced
+JavaScript/MERN developer) and enforces the output schema. The schema
+stipulates two fields: \texttt{text} (a human-readable explanation) and
+\texttt{fileTree} (a file tree matching Equation~\ref{eq:filetree}). This
+design means the AI response is directly mountable into the WebContainer
+instance, enabling one-click execution of AI-generated code.
+
+\subsection{AI Controller and Route}
+
+The REST endpoint (\texttt{GET /api/v1/ai/get-result?prompt=...}) is handled
+by \texttt{ai.controller.ts}:
+
+\begin{lstlisting}[caption={AI controller (\texttt{ai.controller.ts}).},
+  label=lst:aictl]
+export const getResult = async (req: Request, res: Response) => {
+  const prompt = req.query.prompt as string;
+  const result = await generateResult(prompt);
+  res.json({ result });
+};
+\end{lstlisting}
+
+This endpoint is intentionally unauthenticated to allow direct programmatic
+access; the primary invocation path flows through Socket.io where project
+membership is already verified.
+
+\subsection{AI-Broadcast Flow}
+
+\Cref{fig:ai_flow} illustrates the complete end-to-end flow from a user
+typing \texttt{@ai generate a REST endpoint for user login} to all
+collaborators receiving the generated code.
+
+\begin{figure}[H]
+  \centering
+  \begin{tikzpicture}[
+    font=\small,
+    node distance=0.45cm and 0.1cm,
+    step/.style={
+      rectangle, rounded corners=3pt,
+      minimum width=3cm, minimum height=0.7cm,
+      text centered, draw, thick, fill=white
+    },
+    timeline/.style={-Stealth, thick, gray},
+    arr/.style={-Stealth, thick, blue!70!black},
+  ]
+    %% ── Swim-lane headers ────────────────────────────────────
+    \node[font=\bfseries\small] (hdr_u)  at (-4.5, 0.4) {User A};
+    \node[font=\bfseries\small] (hdr_s)  at (0,    0.4) {Server};
+    \node[font=\bfseries\small] (hdr_g)  at (4.5,  0.4) {Gemini};
+    \node[font=\bfseries\small] (hdr_b)  at (-4.5,-7.6) {All Members};
+
+    %% ── Timeline bars ────────────────────────────────────────
+    \draw[gray!40, very thick] (-4.5,0) -- (-4.5,-7.2);
+    \draw[gray!40, very thick] (0,0)    -- (0,-7.2);
+    \draw[gray!40, very thick] (4.5,0)  -- (4.5,-7.2);
+
+    %% ── Steps ────────────────────────────────────────────────
+    \node[step, fill=blue!10]   (t1) at (-4.5,-0.8) {Type \texttt{@ai ...}};
+    \node[step, fill=blue!10]   (t2) at (-4.5,-1.8) {emit("project-message")};
+    \node[step, fill=green!10]  (t3) at (0,   -2.5) {Detect \texttt{@ai} prefix};
+    \node[step, fill=green!10]  (t4) at (0,   -3.4) {Extract prompt};
+    \node[step, fill=green!10]  (t5) at (0,   -4.2) {Broadcast raw msg};
+    \node[step, fill=orange!10] (t6) at (4.5, -4.9) {Process \& generate};
+    \node[step, fill=orange!10] (t7) at (4.5, -5.8) {Return JSON response};
+    \node[step, fill=green!10]  (t8) at (0,   -6.2) {\texttt{io.to(room).emit}};
+    \node[step, fill=blue!10]   (t9) at (-4.5,-7.0) {Render AI message};
+
+    %% ── Arrows ───────────────────────────────────────────────
+    \draw[arr] (t2.east)  -- (t3.west)  node[midway,above]{\tiny WSS};
+    \draw[arr] (t3.south) -- (t4.north);
+    \draw[arr] (t4.east)  -- (t6.west)  node[midway,above]{\tiny HTTPS};
+    \draw[arr] (t4.south) -- (t5.north);
+    \draw[arr] (t7.west)  -- (t8.east)  node[midway,above]{\tiny JSON};
+    \draw[arr] (t8.west)  -- (t9.east)  node[midway,above]{\tiny WSS};
+  \end{tikzpicture}
+  \caption{Sequence diagram of an \texttt{@ai} invocation. The message is
+    first rebroadcast to the room (so peers see the user's query), then the
+    Gemini response is broadcast to all room members including the invoker.}
+  \label{fig:ai_flow}
+\end{figure}
+
+\subsection{Front-End AI Response Rendering}
+
+The front-end \texttt{ChatBox} component (\texttt{components/ChatBox.tsx})
+renders chat messages using \texttt{react-markdown} with the
+\texttt{remark-gfm} plugin, providing GitHub-Flavoured Markdown support
+including fenced code blocks with syntax highlighting. AI responses are
+identified by \texttt{sender.email === "AI"} and styled with a distinct badge,
+enabling users to visually distinguish AI-generated content from peer messages.
+
+\subsection{Security Considerations for AI Endpoints}
+
+\textbf{Prompt injection.}
+The system instruction partially mitigates prompt injection by constraining
+the model's response schema; arbitrary instruction overrides are unlikely to
+produce non-JSON output that bypasses downstream parsing. Production hardening
+should apply a dedicated prompt-injection detection layer~\cite{greshake2023indirect}.
+
+\textbf{Cost management.}
+The Gemini API is billed per token. Without rate limiting, a malicious actor
+could exhaust the API quota. The current implementation lacks per-user rate
+limiting; \cref{sec:conclusion} lists this as a priority item.
+
+\textbf{Data privacy.}
+User prompts are transmitted to Google's infrastructure. \echoray{}'s
+deployment documentation should advise operators to review Google's data
+processing terms and consider on-premises alternatives (e.g., Ollama
+\cite{ollama2024}) for sensitive environments.

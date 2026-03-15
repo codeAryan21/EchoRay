@@ -1,0 +1,204 @@
+%% ============================================================
+\section{System Architecture}
+\label{sec:architecture}
+%% ============================================================
+
+\subsection{Architectural Philosophy}
+
+\echoray{} is designed around three guiding principles:
+
+\begin{enumerate}[leftmargin=*, label=\textbf{P\arabic*.}]
+  \item \textbf{Separation of Concerns.} Business logic, data access, and
+    transport are cleanly layered: Routes $\rightarrow$ Controllers
+    $\rightarrow$ Services $\rightarrow$ Prisma ORM, with Socket.io
+    orthogonal to the REST layer.
+  \item \textbf{Type Safety End-to-End.} Both client and server are written in
+    TypeScript; Prisma generates typed query methods from the schema; Zod
+    validates and narrows all external inputs at runtime.
+  \item \textbf{Cloud-Native Statelessness.} Application servers are
+    horizontally scalable; the only stateful services are the PostgreSQL
+    database and Redis cache, both of which are externally managed.
+\end{enumerate}
+
+\subsection{Layered Component Model}
+
+\Cref{fig:arch_layers} depicts the full layered architecture.
+
+\begin{figure}[H]
+  \centering
+  \begin{tikzpicture}[
+    font=\small,
+    layer/.style={
+      rectangle, rounded corners=3pt,
+      minimum width=11cm, minimum height=0.9cm,
+      text centered, draw, thick
+    },
+    lbl/.style={font=\bfseries\footnotesize, anchor=west},
+  ]
+    \node[layer, fill=blue!10]  (l1) at (0,0)    {Browser: Next.js 15 + React 19 + Monaco Editor + Redux + TailwindCSS};
+    \node[layer, fill=cyan!10]  (l2) at (0,-1.1) {Transport: Socket.io 4.8 (WebSocket) \quad|\quad Axios HTTP/REST};
+    \node[layer, fill=green!10] (l3) at (0,-2.2) {API Gateway: Express 5 — Routes / Controllers / Zod Validation / Helmet};
+    \node[layer, fill=yellow!15](l4) at (0,-3.3) {Business Logic: Services (User, Project, AI, Redis)};
+    \node[layer, fill=orange!15](l5) at (0,-4.4) {Data Access: Prisma ORM with Accelerate \quad|\quad Redis (ioredis)};
+    \node[layer, fill=red!10]   (l6) at (0,-5.5) {Persistence: PostgreSQL (Supabase/Neon) \quad|\quad Redis Cloud / Upstash};
+    \node[layer, fill=purple!10](l7) at (0,-6.6) {External AI: Google Gemini 2.5 Flash (REST via \texttt{@google/generative-ai})};
+
+    \foreach \a/\b in {l1/l2,l2/l3,l3/l4,l4/l5,l5/l6,l6/l7}{
+      \draw[-Stealth,thick] (\a.south) -- (\b.north);
+      \draw[-Stealth,thick] (\b.north) -- (\a.south);
+    }
+  \end{tikzpicture}
+  \caption{Layered architecture of \echoray. Bidirectional arrows denote
+    request/response or event flow between adjacent layers.}
+  \label{fig:arch_layers}
+\end{figure}
+
+\subsection{Database Schema}
+
+The data model is deliberately minimal, exposing two principal entities:
+\texttt{User} and \texttt{Project}, linked by a many-to-many association
+representing project membership and a one-to-many association representing
+project leadership.
+
+\begin{lstlisting}[language=SQL,caption={Prisma schema (\texttt{schema.prisma}). The
+  \texttt{fileTree} column stores the entire project file structure as a
+  JSON blob, enabling schema-free project content evolution.},
+  label=lst:schema]
+model User {
+  id              Int       @id @default(autoincrement())
+  email           String    @unique
+  password        String
+  createdAt       DateTime  @default(now())
+  projects        Project[] @relation("UserProjects")
+  leadingProjects Project[] @relation("ProjectLeader")
+}
+
+model Project {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  users     User[]   @relation("UserProjects")
+  fileTree  Json     @default("{}")
+  createdAt DateTime @default(now())
+  leaderId  Int
+  leader    User     @relation("ProjectLeader",
+                      fields: [leaderId], references: [id])
+}
+\end{lstlisting}
+
+The \texttt{fileTree} JSON column stores the project's complete virtual file
+system as a flat key-value map of the form:
+
+\begin{equation}
+  \mathcal{F} : \text{path} \to \bigl\{\ \texttt{file}:
+  \{\,\texttt{contents}: \text{string}\,\}\ \bigr\}
+  \label{eq:filetree}
+\end{equation}
+
+This representation is directly compatible with the WebContainer
+API~\cite{stackblitz2023wc} file-system mounting interface, enabling
+in-browser execution without any transformation.
+
+\subsection{REST API Surface}
+
+\echoray{} exposes sixteen REST endpoints across three route namespaces,
+as summarised in \cref{tab:api}.
+
+\begin{table}[H]
+  \centering
+  \caption{REST API endpoint catalogue (\texttt{server/src/routes/}).
+    Protected endpoints require a valid JWT in the \texttt{Authorization}
+    header or \texttt{token} cookie; the token is also verified against the
+    Redis blacklist.}
+  \label{tab:api}
+  \setlength{\tabcolsep}{4pt}
+  \begin{tabular}{llll}
+    \toprule
+    \textbf{Method} & \textbf{Endpoint} & \textbf{Auth} & \textbf{Purpose} \\
+    \midrule
+    POST   & \texttt{/api/v1/user/register}        & No  & Create user account \\
+    POST   & \texttt{/api/v1/user/login}            & No  & Authenticate, issue JWT \\
+    GET    & \texttt{/api/v1/user/profile}          & Yes & Fetch own profile \\
+    GET    & \texttt{/api/v1/user/logout}           & Yes & Revoke token (Redis) \\
+    GET    & \texttt{/api/v1/user/getAll}           & Yes & List all other users \\
+    GET    & \texttt{/api/v1/user/getUserByEmail}   & Yes & Find user by e-mail \\
+    \midrule
+    POST   & \texttt{/api/v1/project/create}        & Yes & Create project \\
+    GET    & \texttt{/api/v1/project/getAll}        & Yes & List user's projects \\
+    POST   & \texttt{/api/v1/project/addUsers}      & Yes & Add collaborators (leader) \\
+    GET    & \texttt{/api/v1/project/get-project/:id}& Yes & Get project details \\
+    DELETE & \texttt{/api/v1/project/delete/:id}   & Yes & Delete project (leader) \\
+    POST   & \texttt{/api/v1/project/removeUsers}  & Yes & Remove collaborators (leader) \\
+    PUT    & \texttt{/api/v1/project/update-file-tree}& Yes & Persist file tree \\
+    \midrule
+    GET    & \texttt{/api/v1/ai/get-result}         & No  & Query Gemini (prompt) \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Deployment Topology}
+
+\Cref{fig:deploy} depicts the production deployment topology. The front end
+is served as a hybrid SSR/SSG Next.js application from Vercel's edge network.
+The back end runs on Render or Railway as a persistent Node.js process
+listening on port~5000. The database is hosted on Supabase or Neon (both
+provide serverless PostgreSQL with connection pooling), accessed via Prisma
+Accelerate for query-level caching. Redis is provisioned on Upstash or Redis
+Cloud, providing a geo-distributed key-value store for token blacklisting.
+
+\begin{figure}[H]
+  \centering
+  \begin{tikzpicture}[
+    font=\small,
+    svc/.style={
+      rectangle, rounded corners=4pt,
+      minimum width=2.5cm, minimum height=0.8cm,
+      text centered, draw, thick
+    },
+    arr/.style={-Stealth, thick},
+  ]
+    \node[svc, fill=blue!15]   (browser) at (0,0)     {Browser\\(Vercel CDN)};
+    \node[svc, fill=green!15]  (api)     at (4,0)     {Express API\\(Render/Railway)};
+    \node[svc, fill=orange!15] (pg)      at (8,1)     {PostgreSQL\\(Supabase/Neon)};
+    \node[svc, fill=red!15]    (redis)   at (8,-1)    {Redis\\(Upstash)};
+    \node[svc, fill=purple!15] (gemini)  at (4,-2)    {Google Gemini\\2.5 Flash};
+
+    \draw[arr, bend left=10]  (browser.east)  to node[above]{\tiny HTTPS/WSS} (api.west);
+    \draw[arr, bend left=10]  (api.west)      to (browser.east);
+    \draw[arr]                (api.east)       to[bend left=15]  (pg.west);
+    \draw[arr]                (pg.west)        to[bend left=15]  (api.east);
+    \draw[arr]                (api.east)       to[bend right=15] (redis.west);
+    \draw[arr]                (redis.west)     to[bend right=15] (api.east);
+    \draw[arr]                (api.south)      to (gemini.north);
+    \draw[arr]                (gemini.north)   to (api.south);
+  \end{tikzpicture}
+  \caption{Production deployment topology of \echoray. Browser clients
+    communicate with the Express API over HTTPS for REST calls and WSS for
+    Socket.io. The API server interacts with PostgreSQL via Prisma, Redis via
+    ioredis, and Google Gemini via the official Node.js SDK.}
+  \label{fig:deploy}
+\end{figure}
+
+\subsection{Key Design Decisions}
+
+\textbf{JSON-blob file storage.}
+Storing the entire file tree as a single \texttt{Json} column trades
+fine-grained SQL access for implementation simplicity and atomic updates.
+Because projects in \echoray{} are small-to-medium prototypes (comparable in
+scale to StackBlitz sandboxes), this approach is practical; migration to a
+normalised file-entity model is deferred to future work (\cref{sec:conclusion}).
+
+\textbf{Express~5 over Next.js API routes.}
+The API is hosted in a separate Express server rather than Next.js API routes
+to allow independent scaling, easier Socket.io integration (which requires a
+persistent Node.js process), and deployment to general-purpose PaaS providers.
+
+\textbf{Prisma Accelerate.}
+Prisma Accelerate provides a connection pool and an LRU query cache at the
+database edge, reducing median query latency from~$\sim$30\,ms (direct
+connection) to~$\sim$8\,ms for read-heavy endpoints (see \cref{sec:evaluation}).
+
+\textbf{TypeScript end-to-end.}
+TypeScript catches a significant class of type errors at compile time. Zod
+schemas in \texttt{utils/schema.ts} add a runtime validation layer, ensuring
+that even valid TypeScript types that carry semantically invalid values (e.g.,
+an empty string as a project name) are rejected before reaching the database.
